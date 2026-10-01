@@ -1,0 +1,4 @@
+customtkinter
+spotipy
+ytmusicapi
+requests
