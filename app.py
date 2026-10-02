@@ -8,7 +8,7 @@ Cada pessoa usa as PRÓPRIAS contas:
   - YouTube Music: cola os cabeçalhos da requisição copiados do navegador. O app
     limpa, valida (faz uma chamada de teste) e só então salva.
 
-Nada de credenciais é embutido no código. Tudo fica em %APPDATA%\\MigradorPlaylists.
+Nada de credenciais é embutido no código. Tudo fica em %APPDATA%\MigradorPlaylists.
 """
 import base64
 import glob
@@ -24,6 +24,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import urllib.request
 import webbrowser
 from difflib import SequenceMatcher
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -37,9 +38,10 @@ from tkinter import font as tkfont
 from spotipy.exceptions import SpotifyException
 from ytmusicapi import YTMusic
 
-# ============================== CAMINHOS ======================================
+# ============================== CAMINHOS & CONFIGURAÇÕES ======================
 APP_NAME = 'MigradorPlaylists'
-APP_VERSION = '1.1.0'
+APP_VERSION = '1.1.1'
+GITHUB_REPO = 'deadbynetsu/migrador-playlists'  # Altere para "seu-usuario/seu-repositorio" se necessário
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -62,7 +64,22 @@ DATA_DIR = obter_pasta_dados()
 SPOTIFY_CONFIG_PATH = os.path.join(DATA_DIR, 'spotify_config.json')   # só o client_id
 SPOTIFY_TOKEN_PATH = os.path.join(DATA_DIR, 'spotify_token.json')
 YT_AUTH_PATH = os.path.join(DATA_DIR, 'ytmusic_auth.json')
+SETTINGS_PATH = os.path.join(DATA_DIR, 'settings.json')
 LOG_ERROS_PATH = os.path.join(DATA_DIR, 'erros.log')
+
+
+def checar_atualizacoes_habilitadas():
+    """Retorna True se a checagem automática estiver ligada. Padrão: True."""
+    cfg = ler_json(SETTINGS_PATH, {}) or {}
+    return cfg.get('auto_update', True)
+
+
+def salvar_config_atualizacao(habilitado):
+    """Salva a preferência do usuário de checar atualizações."""
+    cfg = ler_json(SETTINGS_PATH, {}) or {}
+    cfg['auto_update'] = bool(habilitado)
+    gravar_json(SETTINGS_PATH, cfg)
+
 
 # ============================== SPOTIFY (PKCE) ================================
 SPOTIFY_REDIRECT_URI = 'http://127.0.0.1:8080'
@@ -227,7 +244,6 @@ class SpotifyPKCE:
         novo.setdefault('refresh_token', token['refresh_token'])
         return self._gravar_token(novo)
 
-    # Interface esperada pelo spotipy
     def get_access_token(self, as_dict=True, check_cache=True):
         token = self._ler_token()
         if not token or not token.get('refresh_token'):
@@ -249,9 +265,6 @@ def spotify_vinculado():
 
 
 # ============================== YOUTUBE MUSIC =================================
-# Só esses cabeçalhos são aproveitados. Todo o resto que o navegador copia
-# (pseudo-cabeçalhos ":path", accept-encoding com br/zstd, content-length,
-# content-encoding...) é descartado porque quebra a chamada.
 HEADERS_PERMITIDOS = {
     'cookie', 'authorization', 'user-agent', 'accept-language',
     'x-goog-authuser', 'x-goog-visitor-id', 'x-goog-pageid',
@@ -272,7 +285,7 @@ def _valor_entre_aspas(m):
 def cabecalhos_de_curl(texto):
     """Extrai os cabeçalhos de um 'Copy as cURL (bash)' do Chrome/Brave/Edge."""
     texto = texto.replace('\\\r\n', ' ').replace('\\\n', ' ')
-    texto = re.split(r'\s--data(?:-raw|-binary|-urlencode)?\s', texto)[0]   # ignora o corpo
+    texto = re.split(r'\s--data(?:-raw|-binary|-urlencode)?\s', texto)[0]
     brutos = {}
     for m in re.finditer(r"""(?<!\S)(?:-H|--header)\s+(?:'([^']*)'|"([^"]*)")""", texto):
         h = _valor_entre_aspas(m)
@@ -286,8 +299,7 @@ def cabecalhos_de_curl(texto):
 
 
 def normalizar_cabecalhos_yt(texto):
-    """Aceita JSON, 'nome: valor' (uma linha) ou nome/valor em linhas alternadas.
-    Devolve o dicionário pronto para o ytmusicapi ou levanta ValueError (PT-BR)."""
+    """Aceita JSON, 'nome: valor' (uma linha) ou nome/valor em linhas alternadas."""
     texto = (texto or '').strip()
     if not texto:
         raise ValueError('O campo está vazio. Cole os cabeçalhos copiados do navegador.')
@@ -307,12 +319,10 @@ def normalizar_cabecalhos_yt(texto):
         linhas = [l.strip() for l in texto.splitlines() if l.strip()]
         casam = [l for l in linhas if _PADRAO_LINHA.match(l)]
         if linhas and len(casam) >= len(linhas) / 2:
-            # formato "nome: valor"
             for l in casam:
                 nome, valor = _PADRAO_LINHA.match(l).groups()
                 brutos[nome.strip().lower()] = valor.strip()
         else:
-            # formato alternado: nome numa linha, valor na seguinte
             i = 0
             while i < len(linhas) - 1:
                 nome = linhas[i].lower().rstrip(':').strip()
@@ -345,7 +355,7 @@ def normalizar_cabecalhos_yt(texto):
     final = {
         'user-agent': USER_AGENT_PADRAO,
         'accept': '*/*',
-        'accept-encoding': 'gzip, deflate',   # sem br/zstd: a biblioteca não decodifica
+        'accept-encoding': 'gzip, deflate',
         'content-type': 'application/json',
         'origin': 'https://music.youtube.com',
         'x-goog-authuser': '0',
@@ -363,7 +373,7 @@ def testar_ytmusic(caminho):
         return nome or 'conta conectada'
     except Exception:
         pass
-    yt.get_library_playlists(limit=1)   # se também falhar, a exceção sobe
+    yt.get_library_playlists(limit=1)
     return 'conta conectada'
 
 
@@ -433,7 +443,7 @@ class ControleMigracao:
     def __init__(self):
         self._pausar = threading.Event()
         self._cancelar = threading.Event()
-        self._parar = threading.Event()   # acorda quando qualquer um dos dois for pedido
+        self._parar = threading.Event()
 
     def pausar(self):
         self._pausar.set()
@@ -447,15 +457,12 @@ class ControleMigracao:
         return self._cancelar.is_set()
 
     def checar(self):
-        """Chamar nos pontos seguros (entre músicas). Cancelar tem prioridade sobre pausar."""
         if self._cancelar.is_set():
             raise MigracaoCancelada()
         if self._pausar.is_set():
             raise MigracaoPausada()
 
     def esperar(self, segundos, so_cancelamento=False):
-        """Espera 'segundos', mas acorda antes se o usuário pedir. True = deve parar.
-        Com so_cancelamento=True a pausa é ignorada (a música atual termina antes de pausar)."""
         if so_cancelamento:
             return self._cancelar.wait(segundos)
         return self._parar.wait(segundos)
@@ -467,7 +474,7 @@ ctk.set_default_color_theme('green')
 # ============================== TEMA ==========================================
 COR_FUNDO = '#0D0E16'
 COR_CARTAO = '#151726'
-COR_CARTAO_2 = '#1C1F33'        # campos e botões secundários
+COR_CARTAO_2 = '#1C1F33'
 COR_BORDA = '#2A2E48'
 COR_TEXTO = '#EDEFF7'
 COR_TEXTO_2 = '#8D93B0'
@@ -477,10 +484,9 @@ COR_ROXO = '#8B5CF6'
 COR_OK = '#34D399'
 COR_AVISO = '#F5B544'
 COR_ERRO = '#F87171'
-COR_SOBRE_TEAL = '#05221E'      # texto escuro sobre o botão principal
+COR_SOBRE_TEAL = '#05221E'
 COR_DESATIVADO = '#555B78'
 
-# Links que aparecem no rodapé: (nome, ícone, endereço, cor do ícone, largura do botão)
 LINKS_SOCIAIS = [
     ('GitHub', 'github', 'https://github.com/deadbynetsu', '#E6EDF3', 108),
     ('Instagram', 'instagram', 'https://www.instagram.com/deadbynetsu.dev/', '#F472B6', 126),
@@ -494,7 +500,6 @@ FONTE_MONO = 'Consolas'
 
 
 def definir_fontes(raiz):
-    """Escolhe a melhor fonte instalada (Segoe UI no Windows; alternativas em outros sistemas)."""
     global FONTE_UI, FONTE_MONO
     try:
         familias = {f.lower() for f in tkfont.families(raiz)}
@@ -528,7 +533,6 @@ RGB_ROXO = _hex_para_rgb(COR_ROXO)
 
 
 def cor_do_degrade(t):
-    """Cor (hex) em que o degradê verde-água -> roxo está na posição t (0 a 1)."""
     t = min(1.0, max(0.0, t))
     r, g, b = (round(RGB_TEAL[k] + (RGB_ROXO[k] - RGB_TEAL[k]) * t) for k in range(3))
     return f'#{r:02x}{g:02x}{b:02x}'
@@ -548,9 +552,7 @@ def _cortar(texto, limite=70):
     return texto if len(texto) <= limite else texto[:limite - 1].rstrip() + '…'
 
 
-# ============================== ÍCONES (desenhados em código) =================
-# Nada de arquivos de imagem: os ícones são desenhados com Pillow, então o .exe continua
-# sendo só o programa. Cada ícone usa uma grade de 0 a 100.
+# ============================== ÍCONES ========================================
 _CACHE_ICONES = {}
 
 
@@ -559,7 +561,7 @@ def _desenhar_icone(nome, cor):
     u = S / 100.0
     img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    T = (0, 0, 0, 0)   # "tinta" transparente: recorta o que já foi desenhado
+    T = (0, 0, 0, 0)
 
     def P(*v):
         return [x * u for x in v]
@@ -568,7 +570,6 @@ def _desenhar_icone(nome, cor):
         return max(1, int(x * u))
 
     def linha(pontos, larg=7):
-        """Linha com pontas e cantos arredondados."""
         pts = P(*pontos)
         xy = list(zip(pts[0::2], pts[1::2]))
         d.line(xy, fill=cor, width=W(larg), joint='curve')
@@ -665,7 +666,6 @@ def _desenhar_icone(nome, cor):
 
 
 def icone(nome, cor='#EDEFF7', tam=18):
-    """CTkImage pronto para usar em botões (com cache)."""
     chave = (nome, cor, tam)
     if chave not in _CACHE_ICONES:
         img = _desenhar_icone(nome, cor)
@@ -673,8 +673,6 @@ def icone(nome, cor='#EDEFF7', tam=18):
     return _CACHE_ICONES[chave]
 
 
-
-# ---------- botões ----------
 _ESTILOS_BOTAO = {
     'primario': dict(fg_color=COR_TEAL, hover_color=COR_TEAL_HOVER, text_color=COR_SOBRE_TEAL,
                      border_width=0, _icone=COR_SOBRE_TEAL),
@@ -689,7 +687,6 @@ _ESTILOS_BOTAO = {
 
 def botao(pai, texto, nome_icone=None, estilo='secundario', comando=None,
           altura=38, largura=0, cor_icone=None):
-    """Botão arredondado com ícone à esquerda do texto."""
     cfg = dict(_ESTILOS_BOTAO[estilo])
     cor_padrao_icone = cfg.pop('_icone')
     btn = ctk.CTkButton(
@@ -704,7 +701,6 @@ def botao(pai, texto, nome_icone=None, estilo='secundario', comando=None,
 
 
 def definir_ativo(btn, ativo, texto=None):
-    """Liga/desliga o botão (o ícone também escurece quando desligado)."""
     opcoes = {'state': 'normal' if ativo else 'disabled'}
     if texto is not None:
         opcoes['text'] = texto
@@ -743,11 +739,8 @@ def imagem_logo(tam=44):
     return ctk.CTkImage(light_image=fundo, dark_image=fundo, size=(tam, tam))
 
 
-# ---------- barra de progresso em degradê ----------
 class BarraProgresso(ctk.CTkFrame):
-    """Barra arredondada com preenchimento em degradê (verde-água -> roxo).
-    A cor revela aos poucos: no começo é verde-água, perto do fim chega ao roxo."""
-    ESCALA = 2   # desenha em 2x e reduz, para as bordas ficarem suaves
+    ESCALA = 2
 
     def __init__(self, pai, altura=14, cor_trilho=COR_CARTAO_2):
         super().__init__(pai, fg_color='transparent', height=altura)
@@ -765,7 +758,6 @@ class BarraProgresso(ctk.CTkFrame):
         self.bind('<Configure>', self._ao_redimensionar)
 
     def _ao_redimensionar(self, evento):
-        # o evento vem em pixels reais; com escala 125%/150% do Windows é preciso voltar à medida lógica
         try:
             largura = round(self._reverse_widget_scaling(evento.width))
         except Exception:
@@ -775,7 +767,6 @@ class BarraProgresso(ctk.CTkFrame):
             self._desenhar()
 
     def definir(self, valor, animar=True):
-        """valor de 0 a 1. A barra desliza até lá."""
         self._alvo = min(1.0, max(0.0, float(valor)))
         if not animar:
             if self._job is not None:
@@ -807,7 +798,7 @@ class BarraProgresso(ctk.CTkFrame):
         ImageDraw.Draw(img).rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=self._cor_trilho)
         largura_fill = int(W * self._atual)
         if largura_fill > 0:
-            largura_fill = max(largura_fill, H)   # no começo aparece uma "bolinha", não um risco
+            largura_fill = max(largura_fill, H)
             if self._degrade is None or self._degrade.size != (W, H):
                 self._degrade = degrade_horizontal(W, H)
             mascara = Image.new('L', (W, H), 0)
@@ -815,6 +806,112 @@ class BarraProgresso(ctk.CTkFrame):
             img.paste(self._degrade, (0, 0), mascara)
         self._img = ctk.CTkImage(light_image=img, dark_image=img, size=(w, self._h))
         self._rotulo.configure(image=self._img)
+
+
+# ============================== AUTO-UPDATER ==================================
+def parse_version(v_str):
+    """Converte versões em formato 'v1.2.3' ou '1.2.3' em lista de inteiros [1, 2, 3]."""
+    clean_v = str(v_str).strip().lstrip("v")
+    return [int(x) for x in clean_v.split(".") if x.isdigit()]
+
+
+def exibir_janela_atualizacao(parent, nova_versao, url_release, notas):
+    """Cria uma janela modal customizada combinando com o tema do aplicativo."""
+    popup = ctk.CTkToplevel(parent)
+    popup.title("🚀 Nova Atualização Disponível!")
+    popup.geometry("480x340")
+    popup.configure(fg_color=COR_FUNDO)
+    popup.resizable(False, False)
+    popup.transient(parent)
+
+    popup.attributes("-topmost", True)
+    popup.focus_force()
+
+    lbl_titulo = ctk.CTkLabel(
+        popup,
+        text="🎉 Nova Versão Disponível!",
+        font=fonte(18, "bold"),
+        text_color=COR_OK,
+    )
+    lbl_titulo.pack(pady=(20, 5))
+
+    lbl_versao = ctk.CTkLabel(
+        popup,
+        text=f"A versão {nova_versao} já está disponível no GitHub!",
+        font=fonte(12, "bold"),
+        text_color=COR_TEXTO,
+    )
+    lbl_versao.pack(pady=5)
+
+    txt_notas = ctk.CTkTextbox(
+        popup,
+        height=120,
+        width=420,
+        font=fonte(11),
+        fg_color=COR_CARTAO,
+        text_color=COR_TEXTO_2,
+        corner_radius=10,
+        border_width=1,
+        border_color=COR_BORDA,
+    )
+    txt_notas.pack(pady=10)
+    txt_notas.insert("1.0", f"Notas da versão:\n{notas if notas else 'Sem detalhes adicionais.'}")
+    txt_notas.configure(state="disabled")
+
+    def ir_para_download():
+        webbrowser.open(url_release)
+        popup.destroy()
+
+    btn_download = botao(
+        popup,
+        "⬇️ Baixar Atualização no GitHub",
+        "globe",
+        "primario",
+        ir_para_download,
+        altura=40,
+        largura=260,
+    )
+    btn_download.pack(pady=(5, 15))
+
+
+def checar_atualizacao(app_root, versao_atual, repo):
+    """Consulta a API do GitHub Releases em segundo plano."""
+    if not repo or 'seu-usuario' in repo:
+        return
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    headers = {"User-Agent": "MigradorPlaylistsApp"}
+
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode("utf-8"))
+
+                latest_tag = data.get("tag_name", "0.0.0")
+                release_url = data.get("html_url", f"https://github.com/{repo}/releases/latest")
+                release_notes = data.get("body", "")
+
+                if parse_version(latest_tag) > parse_version(versao_atual):
+                    app_root.after(
+                        0,
+                        lambda: exibir_janela_atualizacao(
+                            app_root, latest_tag, release_url, release_notes
+                        ),
+                    )
+    except Exception as e:
+        print(f"[Updater] Erro ao buscar atualizações: {e}")
+
+
+def verificar_atualizacoes_auto(app_root):
+    """Inicia a verificação de atualização se estiver ativada nas configurações."""
+    if not checar_atualizacoes_habilitadas():
+        return
+    thread = threading.Thread(
+        target=checar_atualizacao,
+        args=(app_root, APP_VERSION, GITHUB_REPO),
+        daemon=True,
+    )
+    thread.start()
 
 
 # ============================== INTERFACE =====================================
@@ -828,8 +925,8 @@ class MigradorApp(ctk.CTk):
         self.minsize(860, 660)
         self.configure(fg_color=COR_FUNDO)
 
-        self._fila_ui = queue.Queue()   # tudo que mexe na tela passa por aqui (thread-safe)
-        self._controle = None           # ControleMigracao da migração em andamento (ou None)
+        self._fila_ui = queue.Queue()
+        self._controle = None
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
@@ -843,9 +940,29 @@ class MigradorApp(ctk.CTk):
                      text_color=COR_TEXTO, anchor='w').grid(row=0, column=1, sticky='sw')
         ctk.CTkLabel(cab, text='Passe suas playlists do Spotify para o YouTube Music',
                      font=fonte(12), text_color=COR_TEXTO_2, anchor='w').grid(row=1, column=1, sticky='nw')
-        ctk.CTkLabel(cab, text=f'v{APP_VERSION}', font=fonte(11, 'bold'), text_color=COR_TEXTO_2,
-                     fg_color=COR_CARTAO, corner_radius=8, width=56, height=24).grid(
-            row=0, column=2, rowspan=2, sticky='e')
+
+        # Topo Direito: Versão + Switch de Atualização Automática
+        frame_top_right = ctk.CTkFrame(cab, fg_color='transparent')
+        frame_top_right.grid(row=0, column=2, rowspan=2, sticky='e')
+
+        self.switch_update_var = ctk.BooleanVar(value=checar_atualizacoes_habilitadas())
+        self.switch_update = ctk.CTkSwitch(
+            frame_top_right,
+            text='Buscar atualizações',
+            font=fonte(11),
+            text_color=COR_TEXTO_2,
+            progress_color=COR_TEAL,
+            button_color=COR_TEXTO,
+            button_hover_color=COR_TEAL_HOVER,
+            variable=self.switch_update_var,
+            command=self._ao_alternar_atualizacao
+        )
+        self.switch_update.pack(side='right', padx=(10, 0))
+
+        lbl_versao = ctk.CTkLabel(frame_top_right, text=f'v{APP_VERSION}', font=fonte(11, 'bold'),
+                                  text_color=COR_TEXTO_2, fg_color=COR_CARTAO, corner_radius=8,
+                                  width=56, height=24)
+        lbl_versao.pack(side='right')
 
         # Linha 1: contas
         contas = ctk.CTkFrame(self, fg_color='transparent')
@@ -933,6 +1050,14 @@ class MigradorApp(ctk.CTk):
         self.after(100, self._processar_fila)
         migrar_arquivos_antigos()
         self.atualizar_status_vinculos(mostrar_dicas=True)
+        verificar_atualizacoes_auto(self)
+
+    def _ao_alternar_atualizacao(self):
+        salvar_config_atualizacao(self.switch_update_var.get())
+        if self.switch_update_var.get():
+            self.log('🔄 Checagem automática de atualizações ATIVADA.', 'info')
+        else:
+            self.log('⏹️ Checagem automática de atualizações DESATIVADA.', 'aviso')
 
     def _criar_cartao_conta(self, pai, coluna, nome_icone, cor_icone, titulo, comando):
         cx = cartao(pai)
@@ -949,9 +1074,7 @@ class MigradorApp(ctk.CTk):
         btn.grid(row=0, column=2, rowspan=2, padx=(8, 14))
         return status, btn
 
-    # ---------- infraestrutura thread-safe ----------
     def ui(self, fn, *args):
-        """Agenda fn(*args) para rodar na thread principal (seguro chamar de qualquer thread)."""
         self._fila_ui.put((fn, args))
 
     def _processar_fila(self):
@@ -967,7 +1090,6 @@ class MigradorApp(ctk.CTk):
         self.after(100, self._processar_fila)
 
     def perguntar(self, titulo, mensagem):
-        """Pergunta sim/não a partir de uma thread de trabalho e espera a resposta."""
         evento, resposta = threading.Event(), {}
 
         def _mostrar():
@@ -1019,7 +1141,6 @@ class MigradorApp(ctk.CTk):
 
     @staticmethod
     def _lista_passos(pai, passos, largura_texto=560):
-        """Passo a passo numerado (aqui a numeração faz sentido: é uma sequência)."""
         quadro = cartao(pai)
         quadro.pack(fill='x', padx=24)
         for n, texto in enumerate(passos, 1):
@@ -1032,7 +1153,6 @@ class MigradorApp(ctk.CTk):
                          anchor='w', wraplength=largura_texto).pack(side='left', fill='x', expand=True)
         return quadro
 
-    # ---------- status dos vínculos ----------
     def atualizar_status_vinculos(self, mostrar_dicas=False):
         sp_ok = spotify_vinculado()
         yt_ok = os.path.exists(YT_AUTH_PATH)
@@ -1052,7 +1172,6 @@ class MigradorApp(ctk.CTk):
                 if not yt_ok:
                     self.log("   • Clique em 'Vincular' no cartão do YouTube Music.", 'aviso')
 
-    # ---------- progresso ----------
     def _mostrar_pct(self, fracao, animar=True):
         self.lbl_pct.configure(text=f'{int(fracao * 100)}%', text_color=cor_do_degrade(fracao))
         self.barra.definir(fracao, animar)
@@ -1064,7 +1183,6 @@ class MigradorApp(ctk.CTk):
         self._mostrar_pct(0.0, animar=False)
 
     def _ui_progresso(self, feitos, total, detalhe='', fase='faixas'):
-        """feitos = quantas já terminaram; o item mostrado é o seguinte (o que está em andamento)."""
         if fase == 'aprovacao':
             titulo = f'Aprovação manual: {min(feitos + 1, total)} de {total}'
         else:
@@ -1074,7 +1192,6 @@ class MigradorApp(ctk.CTk):
         self._mostrar_pct(feitos / total if total else 0.0)
 
     def _ui_progresso_status(self, titulo, detalhe=''):
-        """Troca só os textos (pausado, interrompido...), mantendo a barra onde está."""
         self.lbl_prog_titulo.configure(text=titulo)
         self.lbl_prog_detalhe.configure(text=_cortar(detalhe, 90))
 
@@ -1082,7 +1199,6 @@ class MigradorApp(ctk.CTk):
         self._ui_progresso_status(titulo, detalhe)
         self._mostrar_pct(1.0)
 
-    # ---------- janela: Spotify ----------
     def abrir_janela_spotify(self):
         janela = self._nova_janela('Vincular conta do Spotify', '700x780')
         cancelar = threading.Event()
@@ -1165,7 +1281,7 @@ class MigradorApp(ctk.CTk):
                 return
             gravar_json(SPOTIFY_CONFIG_PATH, {'client_id': client_id})
             if os.path.exists(SPOTIFY_TOKEN_PATH):
-                os.remove(SPOTIFY_TOKEN_PATH)   # Client ID novo invalida o token antigo
+                os.remove(SPOTIFY_TOKEN_PATH)
             cancelar.clear()
             definir_ativo(btn_vincular, False, 'Aguardando autorização...')
             definir_status(lbl_status, 'info', 'Autorize no navegador que abriu (você tem 3 minutos)...')
@@ -1179,7 +1295,7 @@ class MigradorApp(ctk.CTk):
                         me = spotipy.Spotify(auth_manager=auth, requests_timeout=20).current_user()
                         nome = me.get('display_name') or me.get('id')
                     except Exception:
-                        pass   # autorizou, só não deu para ler o nome
+                        pass
                     self.ui(concluir, True, nome)
                 except InterruptedError:
                     pass
@@ -1202,7 +1318,6 @@ class MigradorApp(ctk.CTk):
         btn_vincular.configure(command=vincular)
         btn_desvincular.configure(command=desvincular)
 
-    # ---------- janela: YouTube Music ----------
     def abrir_janela_yt(self):
         janela = self._nova_janela('Vincular conta do YouTube Music', '720x800')
         corpo = ctk.CTkScrollableFrame(janela, fg_color='transparent')
@@ -1254,7 +1369,7 @@ class MigradorApp(ctk.CTk):
             definir_ativo(btn_salvar, True, 'Validar e salvar')
             if ok:
                 definir_status(lbl_status, 'ok', f'YouTube Music vinculado ({info})!')
-                txt_input.delete('1.0', ctk.END)   # não deixa cookies à vista
+                txt_input.delete('1.0', ctk.END)
             else:
                 definir_status(lbl_status, 'erro', str(info))
 
@@ -1288,7 +1403,6 @@ class MigradorApp(ctk.CTk):
         btn_salvar.configure(command=salvar)
         btn_desvincular.configure(command=desvincular)
 
-    # ---------- janela: histórico ----------
     def abrir_janela_historico(self):
         janela = self._nova_janela('Gerenciar histórico de progresso', '560x480')
 
@@ -1331,7 +1445,6 @@ class MigradorApp(ctk.CTk):
 
         atualizar_lista()
 
-    # ---------- migração ----------
     def iniciar_thread(self):
         link_spotify = self.entry_spotify.get().strip()
         nome_yt = self.entry_yt.get().strip()
@@ -1347,7 +1460,7 @@ class MigradorApp(ctk.CTk):
             return
 
         if self._controle is not None:
-            return   # já existe uma migração em andamento
+            return
 
         controle = ControleMigracao()
         self._controle = controle
@@ -1365,7 +1478,7 @@ class MigradorApp(ctk.CTk):
             return
         controle.pausar()
         definir_ativo(self.btn_pausar, False, 'Pausando...')
-        self.log('⏸️ Pausa pedida: termino a música atual e paro em seguida...', 'aviso')
+        self.log('⏸️️ Pausa pedida: termino a música atual e paro em seguida...', 'aviso')
 
     def cancelar_migracao(self):
         controle = self._controle
@@ -1395,7 +1508,6 @@ class MigradorApp(ctk.CTk):
         definir_ativo(self.btn_cancelar, False, 'Cancelar')
 
     def _ui_travar_controles(self):
-        """Na fase de aprovações finais a tela fica presa nas perguntas: não há o que pausar."""
         definir_ativo(self.btn_pausar, False)
         definir_ativo(self.btn_cancelar, False)
 
@@ -1437,7 +1549,7 @@ class MigradorApp(ctk.CTk):
         ARQUIVO_ESTADO = None
         estado = None
         yt_playlist_id = None
-        pendentes = []   # faixas que exigem aprovação manual: perguntadas só no final
+        pendentes = []
         try:
             if not nome_playlist_destino:
                 nome_playlist_destino = 'Minha Playlist Importada'
@@ -1480,7 +1592,6 @@ class MigradorApp(ctk.CTk):
             try:
                 while True:
                     controle.checar()
-                    # Com token de usuário, o país da conta tem prioridade sobre 'market'.
                     response = sp.playlist_items(SPOTIFY_PLAYLIST_ID, offset=offset, market='BR')
                     items = response.get('items', [])
                     if not items:
@@ -1533,7 +1644,7 @@ class MigradorApp(ctk.CTk):
                 self.ui(self._ui_progresso_reset)
                 return
 
-            controle.checar()   # pausa/cancelamento antes de criar qualquer coisa no YouTube Music
+            controle.checar()
             yt = YTMusic(YT_AUTH_PATH)
             estado = carregar_estado()
             yt_playlist_id = estado.get('playlist_id')
@@ -1554,7 +1665,6 @@ class MigradorApp(ctk.CTk):
             erros_busca_seguidos = 0
 
             def adicionar(video_id, query):
-                """Adiciona 1 faixa (até 3 tentativas) e grava o progresso. -> (ok, ultimo_erro)"""
                 ultimo_erro = None
                 for _ in range(3):
                     try:
@@ -1572,7 +1682,7 @@ class MigradorApp(ctk.CTk):
 
             self.log('\n🔎 Sincronizando faixas com o YouTube Music...')
             for i, item in enumerate(tracks_info, 1):
-                controle.checar()   # único ponto de pausa/cancelamento: entre uma música e outra
+                controle.checar()
                 query = item['full']
                 track_name = item['name']
                 artist_name = item['artist']
@@ -1615,7 +1725,6 @@ class MigradorApp(ctk.CTk):
                         yt_artist_name = yt_artists[0].get('name', '') if yt_artists else str(top_fail.get('author', 'N/A'))
                         candidate_id = top_fail.get('videoId')
 
-                        # Não interrompe a migração: guarda para perguntar só no final.
                         pendentes.append({'query': query, 'yt_title': yt_title,
                                           'yt_artist': yt_artist_name, 'video_id': candidate_id})
                         em_aprovacao = True
@@ -1647,12 +1756,11 @@ class MigradorApp(ctk.CTk):
                         self.log('   ⚠️ Não encontrada no YouTube.', 'aviso')
                         musicas_com_erro.append((query, 'Não encontrada no YouTube Music'))
 
-                controle.esperar(1.5)   # acorda na hora se o usuário pausar/cancelar
+                controle.esperar(1.5)
 
             self.ui(self._ui_progresso_fim, f'Item {len(tracks_info)} de {len(tracks_info)}',
                     'Todas as faixas foram processadas.')
 
-            # ---- fila final: só agora perguntamos o que o app não tinha certeza ----
             controle.checar()
             if pendentes:
                 self.ui(self._ui_travar_controles)
