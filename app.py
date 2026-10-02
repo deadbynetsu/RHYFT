@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -40,7 +41,9 @@ from ytmusicapi import YTMusic
 
 # ============================== CAMINHOS & CONFIGURAÇÕES ======================
 APP_NAME = 'MigradorPlaylists'
-APP_VERSION = '1.1.1'
+APP_VERSION = '1.2.0'
+TAMANHO_LOTE = 10          # quantas músicas por envio ao YouTube Music (cada lote é conferido depois)
+TOLERANCIA_DURACAO = 15    # segundos de diferença aceitos entre Spotify e YouTube
 GITHUB_REPO = 'deadbynetsu/migrador-playlists'  # Altere para "seu-usuario/seu-repositorio" se necessário
 
 if getattr(sys, 'frozen', False):
@@ -489,7 +492,7 @@ COR_DESATIVADO = '#555B78'
 
 LINKS_SOCIAIS = [
     ('GitHub', 'github', 'https://github.com/deadbynetsu', '#E6EDF3', 108),
-    ('Instagram', 'instagram', 'https://www.instagram.com/deadbynetsu.dev/', '#F472B6', 126),
+    ('Instagram', 'instagram', 'https://www.instagram.com/deadbynetsu.dev', '#F472B6', 126),
     ('TikTok', 'tiktok', 'https://www.tiktok.com/@deadbynetsu', '#5EEAD4', 104),
     ('Discord', 'discord', 'https://discord.gg/s9b7R5F6Uh', '#818CF8', 112),
     ('YouTube', 'youtube', 'https://www.youtube.com/@DeadbyNeTsU', '#F87171', 114),
@@ -550,6 +553,44 @@ def degrade_horizontal(largura, altura):
 def _cortar(texto, limite=70):
     texto = ' '.join(str(texto).split())
     return texto if len(texto) <= limite else texto[:limite - 1].rstrip() + '…'
+
+
+# ============================== VALIDAÇÃO DE RESULTADOS =======================
+def _normalizar(texto):
+    """Minúsculas, sem acento e sem pontuação (mantém outros alfabetos: japonês, cirílico...)."""
+    t = unicodedata.normalize('NFKD', str(texto or ''))
+    t = ''.join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r'[^\w\s]', ' ', t.lower())
+    return ' '.join(t.split())
+
+
+def _titulo_base(texto, do_youtube=False):
+    """Título 'puro': sem (feat. ...), [HD], '- Remastered' (Spotify) etc."""
+    t = str(texto or '')
+    t = re.sub(r'\([^)]*\)|\[[^\]]*\]', ' ', t)
+    t = re.sub(r'\s+(feat|ft|featuring)\.?\s.*$', '', t, flags=re.I)
+    if not do_youtube:
+        t = t.split(' - ')[0]
+    return _normalizar(t) or _normalizar(texto)
+
+
+def _artista_limpo(nome):
+    n = _normalizar(nome)
+    n = re.sub(r'\s*(topic|vevo|official|oficial)$', '', n).strip()
+    n = re.sub(r'^the ', '', n)
+    return n
+
+
+# Cada grupo é uma "versão" diferente da música. Se um lado tem e o outro não, não é a mesma faixa.
+_MODIFICADORES = [
+    ('instrumental',), ('slowed',), ('sped up', 'speed up', 'speedup'), ('nightcore',), ('reverb',),
+    ('acapella', 'a cappella'), ('karaoke',), ('cover',), ('remix',), ('live', 'ao vivo', 'en vivo'),
+    ('acoustic', 'acustico', 'acustica'), ('lofi', 'lo fi'), ('8d',), ('mashup',), ('tribute',), ('demo',),
+]
+
+
+def _tem_modificador(texto_normalizado, grupo):
+    return any(re.search(r'(?<!\w)' + re.escape(m) + r'(?!\w)', texto_normalizado) for m in grupo)
 
 
 # ============================== ÍCONES ========================================
@@ -1102,6 +1143,45 @@ class MigradorApp(ctk.CTk):
         evento.wait()
         return resposta.get('v', False)
 
+    def escolher_versao(self, n, total, faixa_spotify, opcoes):
+        """Mostra até 3 candidatos do YouTube Music. Devolve o escolhido ou None (pular)."""
+        evento, resposta = threading.Event(), {}
+
+        def _mostrar():
+            try:
+                janela = self._nova_janela(f'Aprovação manual ({n} de {total})',
+                                           f'600x{250 + 56 * len(opcoes)}')
+            except Exception:
+                evento.set()
+                raise
+
+            def fechar(valor=None):
+                if 'v' in resposta:
+                    return
+                resposta['v'] = valor
+                try:
+                    janela.grab_release()
+                    janela.destroy()
+                finally:
+                    evento.set()
+
+            janela.protocol('WM_DELETE_WINDOW', fechar)
+            janela.lift()
+            self._titulo_janela(janela, 'Qual versão adicionar?',
+                                f'Faixa {n} de {total} aguardando aprovação')
+            ctk.CTkLabel(janela, text=f'No Spotify:  {_cortar(faixa_spotify, 62)}', font=fonte(13, 'bold'),
+                         text_color=COR_TEXTO, anchor='w').pack(fill='x', padx=24, pady=(0, 10))
+            for c in opcoes:
+                rotulo = f'{_cortar(c["yt_title"], 46)}  \u2014  {_cortar(c["yt_artist"] or "?", 28)}'
+                botao(janela, rotulo, 'music', 'secundario', lambda c=c: fechar(c),
+                      altura=42).pack(fill='x', padx=24, pady=4)
+            botao(janela, 'Nenhuma dessas (pular)', None, 'perigo', fechar,
+                  altura=38).pack(fill='x', padx=24, pady=(12, 0))
+
+        self.ui(_mostrar)
+        evento.wait()
+        return resposta.get('v')
+
     def log(self, mensagem, tipo='normal'):
         self.ui(self._log_ui, mensagem, tipo)
 
@@ -1514,32 +1594,63 @@ class MigradorApp(ctk.CTk):
     def similaridade(self, a, b):
         return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-    def validar_resultado(self, track_name, artist_name, yt_title, yt_artist_name):
-        yt_artist_lower = yt_artist_name.lower().strip() if yt_artist_name else ''
-        yt_title_lower = yt_title.lower().strip() if yt_title else ''
+    def melhores_candidatos(self, track_name, artist_name, resultados, maximo=3):
+        """Os resultados do YouTube que mais se parecem com a faixa do Spotify (até 'maximo')."""
+        pontuados = []
+        for r in resultados:
+            video_id = r.get('videoId')
+            if not video_id:
+                continue
+            titulo = r.get('title', '') or ''
+            artistas = r.get('artists') or []
+            artista = artistas[0].get('name', '') if artistas else str(r.get('author', '') or '')
+            pontos = self.similaridade(track_name, titulo)
+            if artist_name:
+                pontos += self.similaridade(artist_name, artista)
+            pontuados.append((pontos, {'video_id': video_id, 'yt_title': titulo, 'yt_artist': artista}))
+        pontuados.sort(key=lambda par: par[0], reverse=True)  # estável: empate mantém a ordem do YouTube
+        return [c for _, c in pontuados[:maximo]]
 
-        if artist_name:
-            artista_sp = artist_name.lower().strip()
-            if not yt_artist_lower:
-                return False
-            score_artista = self.similaridade(artista_sp, yt_artist_lower)
-            if score_artista < 0.35:
-                if not (artista_sp in yt_artist_lower or yt_artist_lower in artista_sp):
-                    return False
+    def validar_resultado(self, track_name, artist_name, yt_title, yt_artist_name,
+                          dur_sp=None, dur_yt=None, artistas_sp=None):
+        """Só aceita sozinho o que for claramente a MESMA faixa; o resto vai para aprovação manual.
+
+        Regras: artista principal igual, título quase igual, mesma 'versão' (live, remix, cover...)
+        e duração parecida. yt_artist_name pode ser um texto ou uma lista com todos os artistas.
+        """
+        if isinstance(yt_artist_name, (list, tuple)):
+            yt_artistas = [a for a in yt_artist_name if a]
         else:
-            if self.similaridade(track_name, yt_title) < 0.85:
+            yt_artistas = [yt_artist_name] if yt_artist_name else []
+        yt_title = yt_title or ''
+
+        # 1) artista principal do Spotify precisa aparecer entre os artistas do YouTube
+        if not artistas_sp and artist_name:
+            artistas_sp = [a for a in re.split(r',\s*', artist_name) if a.strip()]
+        if artistas_sp:
+            if not yt_artistas:
+                return False
+            principal = _artista_limpo(artistas_sp[0])
+            if not any(principal and self.similaridade(principal, _artista_limpo(a)) >= 0.8
+                       for a in yt_artistas):
                 return False
 
-        modifiers = ['instrumental', 'slowed', 'sped up', 'reverb', 'acapella']
-        track_lower = track_name.lower()
-        for mod in modifiers:
-            if mod in track_lower and mod not in yt_title_lower:
-                return False
-            if mod not in track_lower and mod in yt_title_lower:
+        # 2) título praticamente igual (aceita o formato "Artista - Título" dos vídeos)
+        base_sp = _titulo_base(track_name)
+        variantes = [yt_title] + (yt_title.split(' - ') if ' - ' in yt_title else [])
+        melhor = max(self.similaridade(base_sp, _titulo_base(v, do_youtube=True)) for v in variantes)
+        if melhor < (0.85 if artistas_sp else 0.9):
+            return False
+
+        # 3) mesma versão: nenhum lado pode ter live/remix/cover/instrumental... que o outro não tem
+        texto_sp = _normalizar(track_name + ' ' + ' '.join(artistas_sp or []))
+        texto_yt = _normalizar(yt_title + ' ' + ' '.join(yt_artistas))
+        for grupo in _MODIFICADORES:
+            if _tem_modificador(texto_sp, grupo) != _tem_modificador(texto_yt, grupo):
                 return False
 
-        score_titulo = self.similaridade(track_name, yt_title)
-        if score_titulo < 0.2 and (artist_name and artist_name.lower() not in yt_title_lower):
+        # 4) duração parecida (quando os dois lados informam)
+        if dur_sp and dur_yt and abs(dur_sp - dur_yt) > TOLERANCIA_DURACAO:
             return False
 
         return True
@@ -1550,6 +1661,8 @@ class MigradorApp(ctk.CTk):
         estado = None
         yt_playlist_id = None
         pendentes = []
+        fila_lote = []        # músicas já escolhidas, ainda não enviadas
+        enviar_ref = {}
         try:
             if not nome_playlist_destino:
                 nome_playlist_destino = 'Minha Playlist Importada'
@@ -1568,8 +1681,9 @@ class MigradorApp(ctk.CTk):
                 if isinstance(estado, dict):
                     estado.setdefault('playlist_id', None)
                     estado.setdefault('adicionadas', [])
+                    estado.setdefault('videos', [])
                     return estado
-                return {'playlist_id': None, 'adicionadas': []}
+                return {'playlist_id': None, 'adicionadas': [], 'videos': []}
 
             def salvar_estado(estado):
                 gravar_json(ARQUIVO_ESTADO, estado)
@@ -1611,11 +1725,20 @@ class MigradorApp(ctk.CTk):
                                         musicas_indisponiveis_spotify.append(chave_unica)
                                     continue
 
-                                if chave_unica in vistas_no_spotify:
+                                # Identifica pela faixa do Spotify (ID); arquivos locais não têm ID
+                                id_spotify = track.get('id')
+                                chave_faixa = f'sp:{id_spotify}' if id_spotify else chave_unica
+
+                                if chave_faixa in vistas_no_spotify:
                                     continue
 
-                                vistas_no_spotify.add(chave_unica)
-                                tracks_info.append({'name': name, 'artist': artists, 'full': chave_unica})
+                                vistas_no_spotify.add(chave_faixa)
+                                lista_artistas = [a.get('name', '') for a in track.get('artists', [])
+                                                  if a.get('name')]
+                                duracao = (track.get('duration_ms') or 0) / 1000 or None
+                                tracks_info.append({'name': name, 'artist': artists, 'full': chave_unica,
+                                                    'chave': chave_faixa, 'artistas': lista_artistas,
+                                                    'duracao': duracao})
                         except Exception:
                             pass
 
@@ -1648,6 +1771,7 @@ class MigradorApp(ctk.CTk):
             yt = YTMusic(YT_AUTH_PATH)
             estado = carregar_estado()
             yt_playlist_id = estado.get('playlist_id')
+            criada_agora = False
 
             if not yt_playlist_id:
                 self.log(f"🚀 Criando a playlist '{nome_playlist_destino}' no YouTube Music...", 'info')
@@ -1656,79 +1780,193 @@ class MigradorApp(ctk.CTk):
                     raise RuntimeError(f'O YouTube Music recusou criar a playlist: {yt_playlist_id}')
                 estado['playlist_id'] = yt_playlist_id
                 salvar_estado(estado)
+                criada_agora = True
             else:
                 self.log('♻️ Playlist recuperada do histórico!', 'info')
 
             ja_adicionadas = set(estado.get('adicionadas', []))
             musicas_com_erro = []
-            video_ids_sessao = set()
+            video_ids_sessao = set(estado.get('videos', []))
             erros_busca_seguidos = 0
 
-            def adicionar(video_id, query):
+            baseline = {'n': None, 'ok': True}
+
+            def contar_playlist():
+                """Quantidade de faixas na playlist (1 chamada leve). None se o YouTube não informar."""
+                try:
+                    n = yt.get_playlist(yt_playlist_id, limit=1).get('trackCount')
+                    if isinstance(n, str):
+                        n = re.sub(r'\D', '', n) or None
+                    return int(n) if n is not None else None
+                except Exception:
+                    return None
+
+            def ids_na_playlist():
+                """Lê a playlist inteira no YouTube Music (confirmação 100% confiável)."""
+                pl = yt.get_playlist(yt_playlist_id, limit=None)
+                return {t.get('videoId') for t in pl.get('tracks', []) if t.get('videoId')}
+
+            def verificar_presenca(itens):
+                """Confere na playlist real quais itens apareceram. Devolve (presentes, ausentes)."""
+                presentes, ausentes = [], list(itens)
+                for tentativa in range(2):
+                    try:
+                        ids = ids_na_playlist()
+                    except Exception:
+                        registrar_erro_em_arquivo()
+                        ids = None
+                    if ids is not None:
+                        presentes += [i for i in ausentes if i['video_id'] in ids]
+                        ausentes = [i for i in ausentes if i['video_id'] not in ids]
+                    if not ausentes:
+                        break
+                    if tentativa == 0:
+                        controle.esperar(3, so_cancelamento=True)  # dá tempo do YouTube atualizar
+                return presentes, ausentes
+
+            def adicionar_um(video_id):
                 ultimo_erro = None
                 for _ in range(3):
                     try:
                         yt.add_playlist_items(yt_playlist_id, [video_id])
+                        return True, None
                     except Exception as e:
                         ultimo_erro = e
                         if controle.esperar(3, so_cancelamento=True):
                             break
-                        continue
-                    video_ids_sessao.add(video_id)
-                    estado['adicionadas'].append(query)
-                    salvar_estado(estado)
-                    return True, None
                 return False, ultimo_erro
+
+            def enviar_lote():
+                """Envia a fila, CONFERE na playlist o que realmente entrou e só então grava no progresso.
+
+                O YouTube às vezes responde 'sucesso' sem adicionar a música. Por isso nada vira
+                'adicionada' sem aparecer na playlist; o que sumir é reenviado uma a uma.
+                """
+                itens = list(fila_lote)
+                del fila_lote[:]
+                if not itens:
+                    return [], []
+                ids = [i['video_id'] for i in itens]
+                self.log(f'   📦 Enviando lote de {len(itens)} música(s)...', 'info')
+                try:
+                    yt.add_playlist_items(yt_playlist_id, ids)
+                except Exception as e:
+                    registrar_erro_em_arquivo()
+                    self.log(f'   ⚠️ O lote deu erro ({explicar_erro(e)}). Vou conferir o que entrou...', 'aviso')
+
+                # Conferência rápida: a contagem da playlist subiu exatamente o que enviei?
+                depois = contar_playlist() if baseline['ok'] else None
+                if depois is not None and baseline['n'] is not None and depois - baseline['n'] == len(ids):
+                    confirmadas, falhas = itens, []
+                    baseline['n'] = depois
+                else:
+                    # Conferência completa: lê a playlist e vê quais músicas estão lá de verdade
+                    confirmadas, ausentes = verificar_presenca(itens)
+                    falhas = []
+                    if ausentes:
+                        self.log(f'   ⚠️ {len(ausentes)} de {len(itens)} não apareceram na playlist. '
+                                 'Reenviando uma a uma...', 'aviso')
+                        reenviadas = []
+                        for it in ausentes:
+                            ok, erro = adicionar_um(it['video_id'])
+                            if ok:
+                                reenviadas.append(it)
+                            elif erro:
+                                self.log(f'      {explicar_erro(erro)}', 'cinza')
+                        ids_reenviadas = {i['video_id'] for i in reenviadas}
+                        falhas = [i for i in ausentes if i['video_id'] not in ids_reenviadas]
+                        if reenviadas:
+                            ok2, ausentes2 = verificar_presenca(reenviadas)
+                            confirmadas += ok2
+                            falhas += ausentes2
+                    baseline['n'] = contar_playlist()
+                    baseline['ok'] = baseline['n'] is not None
+
+                for it in confirmadas:
+                    video_ids_sessao.add(it['video_id'])
+                    estado['videos'].append(it['video_id'])
+                    estado['adicionadas'].append(it['chave'])
+                if confirmadas:
+                    salvar_estado(estado)
+                for it in falhas:
+                    video_ids_sessao.discard(it['video_id'])
+                    musicas_com_erro.append((it['query'], 'Não confirmada na playlist do YouTube Music'))
+                    self.log(f'   ❌ Não consegui confirmar: {it["query"]}', 'erro')
+
+                self.log(f'   ✅ Lote conferido: {len(confirmadas)} de {len(itens)} confirmada(s) na playlist.',
+                         'sucesso' if not falhas else 'aviso')
+                if falhas:
+                    controle.esperar(6, so_cancelamento=True)
+                return confirmadas, falhas
+
+            enviar_ref['fn'] = enviar_lote
+            baseline['n'] = contar_playlist()
+            if baseline['n'] is None and criada_agora:
+                baseline['n'] = 0
+            baseline['ok'] = baseline['n'] is not None
 
             self.log('\n🔎 Sincronizando faixas com o YouTube Music...')
             for i, item in enumerate(tracks_info, 1):
                 controle.checar()
                 query = item['full']
+                chave = item['chave']
                 track_name = item['name']
                 artist_name = item['artist']
                 self.ui(self._ui_progresso, i - 1, len(tracks_info), query)
 
-                if query in ja_adicionadas:
+                # 'query in ...' mantém compatível o progresso salvo por versões anteriores
+                if chave in ja_adicionadas or query in ja_adicionadas:
                     self.log(f'[{i}/{len(tracks_info)}] ⏩ Já importada: {query}', 'aviso')
                     continue
 
                 self.log(f'\n[{i}/{len(tracks_info)}] 🎵 Procurando: "{query}"')
                 video_id = None
                 search_results = []
+                vistos_busca = set()
                 em_aprovacao = False
 
                 try:
-                    buscas = [f'{track_name} {artist_name}'.strip(), query, track_name]
+                    buscas = []
+                    for termo in (f'{track_name} {artist_name}'.strip(), query, track_name):
+                        if termo and termo not in buscas:
+                            buscas.append(termo)
+
+                    # Para na primeira busca que já tiver um resultado válido
                     for termo in buscas:
-                        if termo:
-                            search_results.extend(yt.search(termo, limit=5))
-                    erros_busca_seguidos = 0
+                        resultados = yt.search(termo, limit=5)
+                        erros_busca_seguidos = 0
+                        novos = [r for r in resultados
+                                 if r.get('videoId') and r['videoId'] not in vistos_busca]
+                        for r in novos:
+                            vistos_busca.add(r['videoId'])
+                        search_results.extend(novos)
 
-                    for top_result in search_results:
-                        yt_title = top_result.get('title', '')
-                        yt_artists = top_result.get('artists', [])
-                        yt_artist_name = yt_artists[0].get('name', '') if yt_artists else str(top_result.get('author', ''))
-                        candidate_id = top_result.get('videoId')
+                        for top_result in novos:
+                            yt_title = top_result.get('title', '')
+                            yt_artists = top_result.get('artists') or []
+                            yt_artistas = [a.get('name', '') for a in yt_artists if a.get('name')]
+                            if not yt_artistas and top_result.get('author'):
+                                yt_artistas = [str(top_result['author'])]
+                            yt_artist_name = ', '.join(yt_artistas)
+                            candidate_id = top_result['videoId']
 
-                        if not candidate_id or candidate_id in video_ids_sessao:
-                            continue
+                            if candidate_id in video_ids_sessao:
+                                continue
 
-                        if self.validar_resultado(track_name, artist_name, yt_title, yt_artist_name):
-                            video_id = candidate_id
-                            self.log(f'   🎯 Match automático -> "{yt_title}" - "{yt_artist_name}"', 'sucesso')
+                            if self.validar_resultado(track_name, artist_name, yt_title, yt_artistas,
+                                                      item.get('duracao'), top_result.get('duration_seconds'),
+                                                      item.get('artistas')):
+                                video_id = candidate_id
+                                self.log(f'   🎯 Match automático -> "{yt_title}" - "{yt_artist_name}"', 'sucesso')
+                                break
+                        if video_id:
                             break
 
                     if not video_id and search_results:
-                        top_fail = search_results[0]
-                        yt_title = top_fail.get('title', '')
-                        yt_artists = top_fail.get('artists', [])
-                        yt_artist_name = yt_artists[0].get('name', '') if yt_artists else str(top_fail.get('author', 'N/A'))
-                        candidate_id = top_fail.get('videoId')
-
-                        pendentes.append({'query': query, 'yt_title': yt_title,
-                                          'yt_artist': yt_artist_name, 'video_id': candidate_id})
+                        candidatos = self.melhores_candidatos(track_name, artist_name, search_results)
+                        pendentes.append({'query': query, 'chave': chave, 'candidatos': candidatos})
                         em_aprovacao = True
-                        self.log(f'   🕒 Sem certeza ("{yt_title}" - "{yt_artist_name}"): '
+                        self.log(f'   🕒 Sem certeza ({len(candidatos)} opção(ões) parecida(s)): '
                                  'vai para a fila de aprovação, pergunto no final.', 'aviso')
 
                 except Exception as e:
@@ -1742,21 +1980,20 @@ class MigradorApp(ctk.CTk):
                             'O progresso foi salvo e a migração continua de onde parou.')
 
                 if video_id:
-                    sucesso, ultimo_erro = adicionar(video_id, query)
-                    if sucesso:
-                        self.log('   ✅ Adicionada com sucesso!', 'sucesso')
-                    else:
-                        self.log('   ⚠️ Não consegui adicionar (limite do YouTube ou sessão inválida)', 'erro')
-                        if ultimo_erro:
-                            self.log(f'      {explicar_erro(ultimo_erro)}', 'cinza')
-                        musicas_com_erro.append((query, 'Falha ao adicionar no YouTube Music'))
-                        controle.esperar(6, so_cancelamento=True)
+                    video_ids_sessao.add(video_id)  # reserva, para não repetir o mesmo vídeo no lote
+                    fila_lote.append({'video_id': video_id, 'chave': chave, 'query': query})
+                    self.log(f'   ➕ Na fila do lote ({len(fila_lote)}/{TAMANHO_LOTE})', 'sucesso')
+                    if len(fila_lote) >= TAMANHO_LOTE:
+                        enviar_lote()
                 elif not em_aprovacao:
                     if not any(query == q for q, motivo in musicas_com_erro):
                         self.log('   ⚠️ Não encontrada no YouTube.', 'aviso')
                         musicas_com_erro.append((query, 'Não encontrada no YouTube Music'))
 
                 controle.esperar(1.5)
+
+            if fila_lote:
+                enviar_lote()
 
             self.ui(self._ui_progresso_fim, f'Item {len(tracks_info)} de {len(tracks_info)}',
                     'Todas as faixas foram processadas.')
@@ -1770,33 +2007,29 @@ class MigradorApp(ctk.CTk):
                 for n, p in enumerate(pendentes, 1):
                     prefixo = f'[{n}/{len(pendentes)}]'
                     self.ui(self._ui_progresso, n - 1, len(pendentes), p['query'], 'aprovacao')
-                    if p['video_id'] in video_ids_sessao:
-                        self.log(f'{prefixo} ⏩ Essa versão já foi adicionada por outra faixa: {p["query"]}', 'aviso')
+                    opcoes = [c for c in p['candidatos'] if c['video_id'] not in video_ids_sessao]
+                    if not opcoes:
+                        self.log(f'{prefixo} ⏩ Essas versões já foram adicionadas por outra faixa: {p["query"]}', 'aviso')
                         musicas_com_erro.append((p['query'], 'Versão encontrada já estava na playlist'))
                         continue
 
-                    aprovado = self.perguntar(
-                        'Aprovação Manual',
-                        f'({n} de {len(pendentes)})\n\n'
-                        f'Spotify: {p["query"]}\n\n'
-                        f'Encontrado no YT: {p["yt_title"]} - {p["yt_artist"]}\n\n'
-                        f'Deseja adicionar esta versão?')
+                    escolhida = self.escolher_versao(n, len(pendentes), p['query'], opcoes)
 
-                    if not aprovado:
+                    if escolhida is None:
                         self.log(f'{prefixo} ❌ Rejeitada pelo usuário: {p["query"]}', 'erro')
                         musicas_com_erro.append((p['query'], 'Rejeitada pelo usuário'))
                         continue
 
-                    sucesso, ultimo_erro = adicionar(p['video_id'], p['query'])
-                    if sucesso:
-                        self.log(f'{prefixo} 👉 Aprovada manualmente e adicionada: {p["query"]}', 'sucesso')
+                    video_ids_sessao.add(escolhida['video_id'])
+                    fila_lote.append({'video_id': escolhida['video_id'], 'chave': p['chave'],
+                                      'query': p['query']})
+                    confirmadas, _falhas = enviar_lote()
+                    if confirmadas:
+                        self.log(f'{prefixo} 👉 Aprovada manualmente e adicionada: {p["query"]} '
+                                 f'("{escolhida["yt_title"]}")', 'sucesso')
                         controle.esperar(1.5, so_cancelamento=True)
                     else:
                         self.log(f'{prefixo} ⚠️ Não consegui adicionar: {p["query"]}', 'erro')
-                        if ultimo_erro:
-                            self.log(f'      {explicar_erro(ultimo_erro)}', 'cinza')
-                        musicas_com_erro.append((p['query'], 'Falha ao adicionar no YouTube Music'))
-                        controle.esperar(6, so_cancelamento=True)
 
             self.log('\n' + '=' * 60)
             self.ui(self._ui_progresso_fim, 'Migração concluída',
@@ -1823,6 +2056,12 @@ class MigradorApp(ctk.CTk):
                     self.log(f' - {item} (Indisponível no Spotify)', 'cinza')
 
         except MigracaoPausada:
+            if fila_lote and enviar_ref.get('fn'):
+                try:
+                    self.log('📦 Enviando as músicas já escolhidas antes de pausar...', 'info')
+                    enviar_ref['fn']()
+                except Exception:
+                    registrar_erro_em_arquivo()
             self.ui(self._ui_progresso_status, 'Migração pausada',
                     'O progresso foi salvo. Inicie de novo com o mesmo nome de playlist para retomar.')
             if estado is None:
