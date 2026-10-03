@@ -41,9 +41,11 @@ from ytmusicapi import YTMusic
 
 # ============================== CAMINHOS & CONFIGURAÇÕES ======================
 APP_NAME = 'MigradorPlaylists'
-APP_VERSION = '1.2.0'
+APP_VERSION = '1.3.0'
 TAMANHO_LOTE = 10          # quantas músicas por envio ao YouTube Music (cada lote é conferido depois)
 TOLERANCIA_DURACAO = 15    # segundos de diferença aceitos entre Spotify e YouTube
+PAUSA_BUSCA_SPOTIFY = 0.4  # segundos entre uma busca e outra no Spotify (YouTube ➔ Spotify)
+SPOTIFY_MARKET = 'BR'      # o país da conta tem prioridade quando o token é de usuário
 GITHUB_REPO = 'deadbynetsu/migrador-playlists'  # Altere para "seu-usuario/seu-repositorio" se necessário
 
 if getattr(sys, 'frozen', False):
@@ -86,7 +88,8 @@ def salvar_config_atualizacao(habilitado):
 
 # ============================== SPOTIFY (PKCE) ================================
 SPOTIFY_REDIRECT_URI = 'http://127.0.0.1:8080'
-SPOTIFY_SCOPE = 'playlist-read-private playlist-read-collaborative'
+SPOTIFY_SCOPE = ('playlist-read-private playlist-read-collaborative '
+                 'playlist-modify-private playlist-modify-public')
 SPOTIFY_AUTH_URL = 'https://accounts.spotify.com/authorize'
 SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token'
 
@@ -204,6 +207,11 @@ class SpotifyPKCE:
     def vinculado(self):
         t = self._ler_token()
         return bool(t and t.get('refresh_token'))
+
+    def tem_escrita(self):
+        """True se a autorização guardada permite criar playlists (YouTube Music ➔ Spotify)."""
+        t = self._ler_token() or {}
+        return 'playlist-modify-private' in str(t.get('scope', '')).split()
 
     def autorizar(self, timeout=180, cancelar=None):
         verifier = secrets.token_urlsafe(64)
@@ -492,7 +500,7 @@ COR_DESATIVADO = '#555B78'
 
 LINKS_SOCIAIS = [
     ('GitHub', 'github', 'https://github.com/deadbynetsu', '#E6EDF3', 108),
-    ('Instagram', 'instagram', 'https://www.instagram.com/deadbynetsu.dev', '#F472B6', 126),
+    ('Instagram', 'instagram', 'https://www.instagram.com/deadbynetsu.dev/', '#F472B6', 126),
     ('TikTok', 'tiktok', 'https://www.tiktok.com/@deadbynetsu', '#5EEAD4', 104),
     ('Discord', 'discord', 'https://discord.gg/s9b7R5F6Uh', '#818CF8', 112),
     ('YouTube', 'youtube', 'https://www.youtube.com/@DeadbyNeTsU', '#F87171', 114),
@@ -553,6 +561,63 @@ def degrade_horizontal(largura, altura):
 def _cortar(texto, limite=70):
     texto = ' '.join(str(texto).split())
     return texto if len(texto) <= limite else texto[:limite - 1].rstrip() + '…'
+
+
+# ============================== YOUTUBE MUSIC ➔ SPOTIFY (AUXILIARES) ==========
+def extrair_id_playlist_yt(texto):
+    """Aceita o link completo (music.youtube.com/playlist?list=...) ou só o código da playlist."""
+    texto = (texto or '').strip()
+    m = re.search(r'[?&]list=([A-Za-z0-9_-]+)', texto)
+    if m:
+        return m.group(1)
+    if texto == 'LM' or re.fullmatch(r'[A-Za-z0-9_-]{10,}', texto):
+        return texto
+    return None
+
+
+def _nome_artista_busca(nome):
+    """Tira ' - Topic' e 'VEVO' do nome do canal para usar na busca."""
+    n = re.sub(r'(?i)\s*-\s*topic$', '', str(nome or '')).strip()
+    n = re.sub(r'(?i)vevo$', '', n).strip()
+    return n.replace('"', '')
+
+
+def _titulo_para_busca(titulo, artistas, eh_video=False):
+    """Título 'limpo' para pesquisar no Spotify. Devolve (título, artista_extra_ou_None)."""
+    t = re.sub(r'\([^)]*\)|\[[^\]]*\]', ' ', str(titulo or ''))
+    t = re.sub(r'\s+(feat|ft|featuring)\.?\s.*$', '', t, flags=re.I)
+    partes = [p.strip() for p in t.split(' - ') if p.strip()]
+    if len(partes) >= 2:
+        primeiro = _artista_limpo(partes[0])
+        eh_artista = any(primeiro and primeiro == _artista_limpo(a) for a in artistas)
+        if eh_video or eh_artista:
+            return partes[1].replace('"', ''), partes[0].replace('"', '')   # "Artista - Título"
+        return partes[0].replace('"', ''), None                              # "Título - Versão"
+    return (' '.join(t.split()) or str(titulo or '')).replace('"', ''), None
+
+
+def explicar_erro_spotify(e):
+    status = getattr(e, 'http_status', None)
+    texto = str(e).strip() or e.__class__.__name__
+    if status == 401:
+        return ('A sessão do Spotify expirou ou foi revogada. Abra "Gerenciar" no cartão do Spotify '
+                'e autorize de novo.')
+    if status == 403:
+        return ('O Spotify recusou a operação (403). Confira se você autorizou de novo depois de atualizar '
+                'o app (a permissão de criar playlists é nova) e se o app do painel de desenvolvedores é '
+                'de uma conta Premium.\n(detalhe técnico: ' + texto + ')')
+    if status == 429:
+        return ('O Spotify pediu para ir mais devagar (limite de requisições). '
+                'Espere alguns minutos e retome pelo mesmo nome de playlist.')
+    if isinstance(e, requests.exceptions.ConnectionError) or 'timed out' in texto.lower():
+        return 'Sem conexão com a internet (ou o servidor não respondeu). Verifique a rede e tente de novo.'
+    return texto
+
+
+MSG_REAUTORIZAR = (
+    'Para criar playlists no Spotify o app precisa de uma permissão nova (escrita).\n\n'
+    'Clique em "Gerenciar" no cartão do Spotify e depois em "Vincular e autorizar" de novo. '
+    'Seu Client ID continua salvo; é só aceitar no navegador.')
 
 
 # ============================== VALIDAÇÃO DE RESULTADOS =======================
@@ -962,12 +1027,13 @@ class MigradorApp(ctk.CTk):
         definir_fontes(self)
 
         self.title(f'Migrador de Playlists (v{APP_VERSION})')
-        self.geometry('920x720')
-        self.minsize(860, 660)
+        self.geometry('920x790')
+        self.minsize(860, 720)
         self.configure(fg_color=COR_FUNDO)
 
         self._fila_ui = queue.Queue()
         self._controle = None
+        self.modo = 'sp_yt'   # 'sp_yt' = Spotify ➔ YouTube Music | 'yt_sp' = YouTube Music ➔ Spotify
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
@@ -979,7 +1045,7 @@ class MigradorApp(ctk.CTk):
             row=0, column=0, rowspan=2, padx=(0, 14))
         ctk.CTkLabel(cab, text='Migrador de Playlists', font=fonte(22, 'bold'),
                      text_color=COR_TEXTO, anchor='w').grid(row=0, column=1, sticky='sw')
-        ctk.CTkLabel(cab, text='Passe suas playlists do Spotify para o YouTube Music',
+        ctk.CTkLabel(cab, text='Passe suas playlists entre o Spotify e o YouTube Music',
                      font=fonte(12), text_color=COR_TEXTO_2, anchor='w').grid(row=1, column=1, sticky='nw')
 
         # Topo Direito: Versão + Switch de Atualização Automática
@@ -1019,18 +1085,30 @@ class MigradorApp(ctk.CTk):
         form.grid(row=2, column=0, padx=24, pady=(12, 0), sticky='ew')
         form.grid_columnconfigure((0, 1), weight=1, uniform='campos')
 
-        ctk.CTkLabel(form, text='Link ou ID da playlist do Spotify', font=fonte(12, 'bold'),
-                     text_color=COR_TEXTO_2, anchor='w').grid(row=0, column=0, sticky='w', padx=(18, 8), pady=(16, 4))
-        self.entry_spotify = campo_texto(form, 'https://open.spotify.com/playlist/...')
-        self.entry_spotify.grid(row=1, column=0, sticky='ew', padx=(18, 8))
+        self._rotulos_modo = {'Spotify  ➔  YouTube Music': 'sp_yt', 'YouTube Music  ➔  Spotify': 'yt_sp'}
+        self.seg_modo = ctk.CTkSegmentedButton(
+            form, values=list(self._rotulos_modo), command=self._ao_trocar_modo, height=36,
+            font=fonte(13, 'bold'), fg_color=COR_CARTAO_2, unselected_color=COR_CARTAO_2,
+            unselected_hover_color='#262A44', selected_color=COR_ROXO, selected_hover_color='#7C4DEB',
+            text_color=COR_TEXTO)
+        self.seg_modo.set('Spotify  ➔  YouTube Music')
+        self.seg_modo.grid(row=0, column=0, columnspan=2, sticky='w', padx=18, pady=(16, 0))
 
-        ctk.CTkLabel(form, text='Nome da nova playlist no YouTube Music', font=fonte(12, 'bold'),
-                     text_color=COR_TEXTO_2, anchor='w').grid(row=0, column=1, sticky='w', padx=(8, 18), pady=(16, 4))
+        # entry_spotify = link/ID da playlist de ORIGEM; entry_yt = nome da playlist nova (DESTINO)
+        self.lbl_campo_origem = ctk.CTkLabel(form, text='Link ou ID da playlist do Spotify', font=fonte(12, 'bold'),
+                                             text_color=COR_TEXTO_2, anchor='w')
+        self.lbl_campo_origem.grid(row=1, column=0, sticky='w', padx=(18, 8), pady=(14, 4))
+        self.entry_spotify = campo_texto(form, 'https://open.spotify.com/playlist/...')
+        self.entry_spotify.grid(row=2, column=0, sticky='ew', padx=(18, 8))
+
+        self.lbl_campo_destino = ctk.CTkLabel(form, text='Nome da nova playlist no YouTube Music',
+                                              font=fonte(12, 'bold'), text_color=COR_TEXTO_2, anchor='w')
+        self.lbl_campo_destino.grid(row=1, column=1, sticky='w', padx=(8, 18), pady=(14, 4))
         self.entry_yt = campo_texto(form, 'Minha Playlist Importada')
-        self.entry_yt.grid(row=1, column=1, sticky='ew', padx=(8, 18))
+        self.entry_yt.grid(row=2, column=1, sticky='ew', padx=(8, 18))
 
         acoes = ctk.CTkFrame(form, fg_color='transparent')
-        acoes.grid(row=2, column=0, columnspan=2, sticky='ew', padx=18, pady=(16, 18))
+        acoes.grid(row=3, column=0, columnspan=2, sticky='ew', padx=18, pady=(16, 18))
         acoes.grid_columnconfigure(3, weight=1)
         self.btn_iniciar = botao(acoes, 'Iniciar migração', 'play', 'primario',
                                  self.iniciar_thread, altura=42, largura=176)
@@ -1093,6 +1171,24 @@ class MigradorApp(ctk.CTk):
         self.atualizar_status_vinculos(mostrar_dicas=True)
         verificar_atualizacoes_auto(self)
 
+    def _ao_trocar_modo(self, valor):
+        self.modo = self._rotulos_modo.get(valor, 'sp_yt')
+        reverso = self.modo == 'yt_sp'
+        self.lbl_campo_origem.configure(
+            text='Link ou ID da playlist do YouTube Music' if reverso else 'Link ou ID da playlist do Spotify')
+        self.lbl_campo_destino.configure(
+            text='Nome da nova playlist no Spotify (vazio = mesmo nome)' if reverso
+            else 'Nome da nova playlist no YouTube Music')
+        self.entry_spotify.configure(
+            placeholder_text='https://music.youtube.com/playlist?list=...' if reverso
+            else 'https://open.spotify.com/playlist/...')
+        self.entry_yt.configure(placeholder_text='Mesmo nome da playlist original' if reverso
+                                else 'Minha Playlist Importada')
+        self.entry_spotify.delete(0, ctk.END)
+        self.entry_yt.delete(0, ctk.END)
+        self.focus_set()
+        self._ui_progresso_reset()
+
     def _ao_alternar_atualizacao(self):
         salvar_config_atualizacao(self.switch_update_var.get())
         if self.switch_update_var.get():
@@ -1143,7 +1239,7 @@ class MigradorApp(ctk.CTk):
         evento.wait()
         return resposta.get('v', False)
 
-    def escolher_versao(self, n, total, faixa_spotify, opcoes):
+    def escolher_versao(self, n, total, faixa_spotify, opcoes, origem='Spotify'):
         """Mostra até 3 candidatos do YouTube Music. Devolve o escolhido ou None (pular)."""
         evento, resposta = threading.Event(), {}
 
@@ -1169,7 +1265,7 @@ class MigradorApp(ctk.CTk):
             janela.lift()
             self._titulo_janela(janela, 'Qual versão adicionar?',
                                 f'Faixa {n} de {total} aguardando aprovação')
-            ctk.CTkLabel(janela, text=f'No Spotify:  {_cortar(faixa_spotify, 62)}', font=fonte(13, 'bold'),
+            ctk.CTkLabel(janela, text=f'No {origem}:  {_cortar(faixa_spotify, 62)}', font=fonte(13, 'bold'),
                          text_color=COR_TEXTO, anchor='w').pack(fill='x', padx=24, pady=(0, 10))
             for c in opcoes:
                 rotulo = f'{_cortar(c["yt_title"], 46)}  \u2014  {_cortar(c["yt_artist"] or "?", 28)}'
@@ -1300,7 +1396,8 @@ class MigradorApp(ctk.CTk):
             'Em “Which API/SDKs are you planning to use?”, marque “Web API”, aceite os termos e '
             'clique em “Save”.',
             'Abra o app criado, vá em “Settings” e copie o “Client ID” (o Client Secret não é necessário).',
-            'Cole o Client ID abaixo e clique em “Vincular e autorizar”. No navegador, aceite.',
+            'Cole o Client ID abaixo e clique em “Vincular e autorizar”. No navegador, aceite: o app pede '
+            'permissão para ler e criar playlists na sua conta.',
         ])
 
         botao(corpo, 'Abrir o painel do Spotify para desenvolvedores', 'globe', 'secundario',
@@ -1327,7 +1424,12 @@ class MigradorApp(ctk.CTk):
         lbl_status = ctk.CTkLabel(corpo, text='', wraplength=600, justify='left',
                                   font=fonte(12), anchor='w')
         lbl_status.pack(fill='x', padx=24, pady=(12, 0))
-        if spotify_vinculado():
+        _auth_atual = carregar_auth_spotify()
+        if spotify_vinculado() and _auth_atual and not _auth_atual.tem_escrita():
+            definir_status(lbl_status, 'aviso',
+                           'Vinculado, mas sem permissão para criar playlists. Para usar YouTube Music ➔ '
+                           'Spotify, clique em “Vincular e autorizar” de novo.')
+        elif spotify_vinculado():
             definir_status(lbl_status, 'ok', 'Spotify já vinculado.')
         else:
             definir_status(lbl_status, 'aviso', 'Ainda não vinculado.')
@@ -1501,7 +1603,11 @@ class MigradorApp(ctk.CTk):
                              font=fonte(12), text_color=COR_TEXTO_2).pack(padx=10, pady=40)
                 return
             for arquivo in arquivos:
-                nome_playlist = os.path.basename(arquivo).replace('progresso_', '').replace('.json', '').replace('_', ' ')
+                bruto = os.path.basename(arquivo)[len('progresso_'):-len('.json')]
+                reverso_arq = bruto.startswith('yt-sp_')
+                if reverso_arq:
+                    bruto = bruto[len('yt-sp_'):]
+                nome_playlist = bruto.replace('_', ' ') + ('  (YouTube Music ➔ Spotify)' if reverso_arq else '')
                 row = ctk.CTkFrame(frame_lista, fg_color=COR_CARTAO_2, corner_radius=10)
                 row.pack(fill='x', pady=4, padx=2)
                 ctk.CTkLabel(row, text='', image=icone('music', COR_TEAL, 18), width=26).pack(
@@ -1526,11 +1632,13 @@ class MigradorApp(ctk.CTk):
         atualizar_lista()
 
     def iniciar_thread(self):
-        link_spotify = self.entry_spotify.get().strip()
-        nome_yt = self.entry_yt.get().strip()
+        origem = self.entry_spotify.get().strip()
+        nome_destino = self.entry_yt.get().strip()
+        reverso = self.modo == 'yt_sp'
 
-        if not link_spotify:
-            messagebox.showwarning('Aviso', 'Por favor, insira o link do Spotify!')
+        if not origem:
+            messagebox.showwarning('Aviso', 'Por favor, insira o link do YouTube Music!' if reverso
+                                   else 'Por favor, insira o link do Spotify!')
             return
         if not spotify_vinculado():
             messagebox.showerror('Spotify não vinculado', "Clique em 'Vincular' no cartão do Spotify primeiro.")
@@ -1538,6 +1646,11 @@ class MigradorApp(ctk.CTk):
         if not os.path.exists(YT_AUTH_PATH):
             messagebox.showerror('YouTube Music não vinculado', "Clique em 'Vincular' no cartão do YouTube Music primeiro.")
             return
+        if reverso:
+            auth = carregar_auth_spotify()
+            if not (auth and auth.tem_escrita()):
+                messagebox.showinfo('Permissão nova do Spotify', MSG_REAUTORIZAR)
+                return
 
         if self._controle is not None:
             return
@@ -1547,10 +1660,15 @@ class MigradorApp(ctk.CTk):
         definir_ativo(self.btn_iniciar, False, 'Migrando...')
         definir_ativo(self.btn_pausar, True, 'Pausar')
         definir_ativo(self.btn_cancelar, True, 'Cancelar')
+        self.seg_modo.configure(state='disabled')
         self._limpar_log()
-        self._ui_progresso_reset('Conectando ao Spotify...', 'Lendo as músicas da playlist.')
-        threading.Thread(target=self.processo_migracao, args=(link_spotify, nome_yt, controle),
-                         daemon=True).start()
+        if reverso:
+            self._ui_progresso_reset('Conectando ao YouTube Music...', 'Lendo as músicas da playlist.')
+            alvo = self.processo_migracao_reversa
+        else:
+            self._ui_progresso_reset('Conectando ao Spotify...', 'Lendo as músicas da playlist.')
+            alvo = self.processo_migracao
+        threading.Thread(target=alvo, args=(origem, nome_destino, controle), daemon=True).start()
 
     def pausar_migracao(self):
         controle = self._controle
@@ -1586,6 +1704,7 @@ class MigradorApp(ctk.CTk):
         definir_ativo(self.btn_iniciar, True, 'Iniciar migração')
         definir_ativo(self.btn_pausar, False, 'Pausar')
         definir_ativo(self.btn_cancelar, False, 'Cancelar')
+        self.seg_modo.configure(state='normal')
 
     def _ui_travar_controles(self):
         definir_ativo(self.btn_pausar, False)
@@ -1612,8 +1731,13 @@ class MigradorApp(ctk.CTk):
         return [c for _, c in pontuados[:maximo]]
 
     def validar_resultado(self, track_name, artist_name, yt_title, yt_artist_name,
-                          dur_sp=None, dur_yt=None, artistas_sp=None):
+                          dur_sp=None, dur_yt=None, artistas_sp=None, origem_yt=False):
         """Só aceita sozinho o que for claramente a MESMA faixa; o resto vai para aprovação manual.
+
+        track_name/artist_name/dur_sp/artistas_sp descrevem a faixa de ORIGEM; yt_title/yt_artist_name/
+        dur_yt descrevem o CANDIDATO. Normalmente a origem é o Spotify e o candidato é do YouTube.
+        Com origem_yt=True é o inverso (origem = YouTube Music, candidato = resultado do Spotify): aí o
+        título da origem pode vir como "Artista - Título" e o artista pode ser só o nome do canal.
 
         Regras: artista principal igual, título quase igual, mesma 'versão' (live, remix, cover...)
         e duração parecida. yt_artist_name pode ser um texto ou uma lista com todos os artistas.
@@ -1623,22 +1747,31 @@ class MigradorApp(ctk.CTk):
         else:
             yt_artistas = [yt_artist_name] if yt_artist_name else []
         yt_title = yt_title or ''
+        partes_origem = track_name.split(' - ') if (origem_yt and ' - ' in track_name) else []
 
-        # 1) artista principal do Spotify precisa aparecer entre os artistas do YouTube
+        # 1) artista principal da origem precisa aparecer entre os artistas do candidato
         if not artistas_sp and artist_name:
             artistas_sp = [a for a in re.split(r',\s*', artist_name) if a.strip()]
         if artistas_sp:
             if not yt_artistas:
                 return False
-            principal = _artista_limpo(artistas_sp[0])
-            if not any(principal and self.similaridade(principal, _artista_limpo(a)) >= 0.8
-                       for a in yt_artistas):
+            principais = [_artista_limpo(artistas_sp[0])]
+            if partes_origem:   # vídeo "Artista - Título" num canal qualquer
+                principais.append(_artista_limpo(re.sub(r'\([^)]*\)|\[[^\]]*\]', ' ', partes_origem[0])))
+            if not any(p and self.similaridade(p, _artista_limpo(a)) >= 0.8
+                       for p in principais for a in yt_artistas):
                 return False
 
         # 2) título praticamente igual (aceita o formato "Artista - Título" dos vídeos)
-        base_sp = _titulo_base(track_name)
-        variantes = [yt_title] + (yt_title.split(' - ') if ' - ' in yt_title else [])
-        melhor = max(self.similaridade(base_sp, _titulo_base(v, do_youtube=True)) for v in variantes)
+        if origem_yt:
+            bases_origem = [_titulo_base(track_name, do_youtube=True)] + \
+                           [_titulo_base(p, do_youtube=True) for p in partes_origem]
+            bases_cand = [_titulo_base(yt_title)]
+        else:
+            bases_origem = [_titulo_base(track_name)]
+            variantes = [yt_title] + (yt_title.split(' - ') if ' - ' in yt_title else [])
+            bases_cand = [_titulo_base(v, do_youtube=True) for v in variantes]
+        melhor = max(self.similaridade(a, b) for a in bases_origem for b in bases_cand)
         if melhor < (0.85 if artistas_sp else 0.9):
             return False
 
@@ -1654,6 +1787,23 @@ class MigradorApp(ctk.CTk):
             return False
 
         return True
+
+    def melhores_candidatos_spotify(self, titulo, artista, resultados, maximo=3):
+        """Os resultados do Spotify que mais se parecem com a faixa do YouTube Music.
+        (As chaves yt_title/yt_artist são as mesmas que o diálogo de aprovação já usa.)"""
+        pontuados = []
+        for r in resultados:
+            sp_id = r.get('id')
+            if not sp_id:
+                continue
+            nomes = [a.get('name', '') for a in (r.get('artists') or []) if a.get('name')]
+            pontos = self.similaridade(titulo, r.get('name', '') or '')
+            if artista and nomes:
+                pontos += self.similaridade(artista, nomes[0])
+            pontuados.append((pontos, {'sp_id': sp_id, 'yt_title': r.get('name', '') or '',
+                                       'yt_artist': ', '.join(nomes)}))
+        pontuados.sort(key=lambda par: par[0], reverse=True)
+        return [c for _, c in pontuados[:maximo]]
 
     def processo_migracao(self, spotify_input, nome_playlist_destino, controle=None):
         controle = controle or ControleMigracao()
@@ -2092,6 +2242,451 @@ class MigradorApp(ctk.CTk):
             registrar_erro_em_arquivo()
             self.ui(self._ui_progresso_status, 'Migração interrompida', 'Veja os detalhes no registro abaixo.')
             self.log(f'\n❌ Ocorreu um erro: {explicar_erro(e)}', 'erro')
+        finally:
+            self.ui(self._ui_migracao_terminada, controle)
+
+
+    def processo_migracao_reversa(self, yt_input, nome_playlist_destino, controle=None):
+        """YouTube Music -> Spotify. A playlist nova no Spotify é criada como privada."""
+        controle = controle or ControleMigracao()
+        ARQUIVO_ESTADO = None
+        estado = None
+        sp_playlist_id = None
+        pendentes = []
+        fila_lote = []        # faixas já escolhidas, ainda não enviadas
+        enviar_ref = {}
+        try:
+            id_yt = extrair_id_playlist_yt(yt_input)
+            if not id_yt:
+                raise RuntimeError('Não entendi o link da playlist do YouTube Music. Cole o endereço completo '
+                                   '(music.youtube.com/playlist?list=...) ou só o código depois de "list=".')
+
+            self.log('=' * 60)
+            self.log('Conectando ao YouTube Music...', 'info')
+            yt = YTMusic(YT_AUTH_PATH)
+
+            self.log('🔍 Lendo as músicas da playlist do YouTube Music...', 'info')
+            try:
+                if id_yt == 'LM':
+                    pl = yt.get_liked_songs(limit=None)
+                else:
+                    pl = yt.get_playlist(id_yt, limit=None)
+            except Exception as e:
+                registrar_erro_em_arquivo()
+                raise RuntimeError(f'Não consegui ler a playlist do YouTube Music: {explicar_erro(e)}')
+
+            titulo_origem = pl.get('title') or 'Playlist do YouTube Music'
+            nome_playlist_destino = (nome_playlist_destino or titulo_origem)[:100]
+
+            faixas, indisponiveis, vistos, total_itens = [], [], set(), 0
+            for t in pl.get('tracks') or []:
+                total_itens += 1
+                titulo = (t.get('title') or '').strip()
+                artistas = [a.get('name') for a in (t.get('artists') or []) if a and a.get('name')]
+                nomes = ', '.join(artistas)
+                legivel = f'{titulo} - {nomes}' if nomes else titulo
+                video_id = t.get('videoId')
+                if not video_id or t.get('isAvailable') is False or not titulo:
+                    indisponiveis.append(legivel or '(sem título)')
+                    continue
+                if video_id in vistos:
+                    continue
+                vistos.add(video_id)
+                tipo = t.get('videoType')
+                faixas.append({'name': titulo, 'artistas': artistas, 'artist': nomes, 'full': legivel,
+                               'chave': f'yt:{video_id}', 'duracao': t.get('duration_seconds'),
+                               'eh_video': bool(tipo) and tipo != 'MUSIC_VIDEO_TYPE_ATV'})
+
+            self.log(f'✅ Total no YouTube Music: {total_itens} itens')
+            self.log(f'🎵 Músicas válidas a migrar: {len(faixas)}')
+            if indisponiveis:
+                self.log(f'🚫 Indisponíveis no YouTube Music: {len(indisponiveis)}\n')
+            else:
+                self.log('')
+            if not faixas:
+                self.log('❌ Nenhuma música válida encontrada.', 'erro')
+                self.ui(self._ui_progresso_reset)
+                return
+
+            nome_arquivo_seguro = re.sub(r'[\\/*?:"<>|]', '', nome_playlist_destino).strip().replace(' ', '_') or 'playlist'
+            ARQUIVO_ESTADO = os.path.join(DATA_DIR, f'progresso_yt-sp_{nome_arquivo_seguro}.json')
+
+            def carregar_estado():
+                e = ler_json(ARQUIVO_ESTADO, None)
+                if isinstance(e, dict):
+                    e.setdefault('playlist_id', None)
+                    e.setdefault('adicionadas', [])
+                    e.setdefault('destino_ids', [])
+                    e.setdefault('puladas', [])
+                    return e
+                return {'playlist_id': None, 'adicionadas': [], 'destino_ids': [], 'puladas': []}
+
+            def salvar_estado(e):
+                gravar_json(ARQUIVO_ESTADO, e)
+
+            controle.checar()
+            self.log('Conectando ao Spotify...', 'info')
+            auth = carregar_auth_spotify()
+            if auth is None or not auth.vinculado():
+                raise RuntimeError("Spotify não vinculado. Clique em 'Vincular' no cartão do Spotify.")
+            if not auth.tem_escrita():
+                raise RuntimeError(MSG_REAUTORIZAR.replace('\n\n', ' '))
+            sp = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=5)
+
+            estado = carregar_estado()
+            sp_playlist_id = estado.get('playlist_id')
+            criada_agora = False
+
+            if not sp_playlist_id:
+                self.log(f"🚀 Criando a playlist '{nome_playlist_destino}' no Spotify (privada)...", 'info')
+                try:
+                    criada = sp._post('me/playlists', payload={
+                        'name': nome_playlist_destino, 'public': False,
+                        'description': 'Importada via Migrador de Playlists'})
+                except SpotifyException as e:
+                    raise RuntimeError(explicar_erro_spotify(e))
+                sp_playlist_id = (criada or {}).get('id')
+                if not sp_playlist_id:
+                    raise RuntimeError(f'O Spotify recusou criar a playlist: {criada}')
+                estado['playlist_id'] = sp_playlist_id
+                salvar_estado(estado)
+                criada_agora = True
+            else:
+                self.log('♻️ Playlist recuperada do histórico!', 'info')
+
+            # ---------- conferência do que realmente está na playlist do Spotify ----------
+            baseline = {'n': None, 'ok': True}
+
+            def contar_playlist():
+                try:
+                    n = sp._get(f'playlists/{sp_playlist_id}/items', limit=1).get('total')
+                    return int(n) if n is not None else None
+                except Exception:
+                    return None
+
+            def ids_na_playlist():
+                ids, offset = set(), 0
+                while True:
+                    r = sp._get(f'playlists/{sp_playlist_id}/items', limit=50, offset=offset)
+                    itens = r.get('items') or []
+                    for o in itens:
+                        f = o.get('item') or o.get('track') or {}
+                        if f.get('id'):
+                            ids.add(f['id'])
+                    offset += len(itens)
+                    if not itens or not r.get('next'):
+                        break
+                return ids
+
+            def verificar_presenca(itens):
+                presentes, ausentes = [], list(itens)
+                for tentativa in range(2):
+                    try:
+                        ids = ids_na_playlist()
+                    except Exception:
+                        registrar_erro_em_arquivo()
+                        ids = None
+                    if ids is not None:
+                        presentes += [i for i in ausentes if i['sp_id'] in ids]
+                        ausentes = [i for i in ausentes if i['sp_id'] not in ids]
+                    if not ausentes:
+                        break
+                    if tentativa == 0:
+                        controle.esperar(3, so_cancelamento=True)
+                return presentes, ausentes
+
+            def postar_itens(sp_ids):
+                sp._post(f'playlists/{sp_playlist_id}/items',
+                         payload={'uris': [f'spotify:track:{i}' for i in sp_ids]})
+
+            def adicionar_um(sp_id):
+                ultimo_erro = None
+                for _ in range(3):
+                    try:
+                        postar_itens([sp_id])
+                        return True, None
+                    except Exception as e:
+                        ultimo_erro = e
+                        if controle.esperar(3, so_cancelamento=True):
+                            break
+                return False, ultimo_erro
+
+            def erro_legivel(e):
+                return explicar_erro_spotify(e) if isinstance(e, SpotifyException) else explicar_erro(e)
+
+            ids_sessao = set(estado.get('destino_ids', []))
+            if not criada_agora:
+                # retomada: o que já está na playlist não pode ser adicionado de novo (o Spotify aceita duplicadas)
+                try:
+                    ids_sessao |= ids_na_playlist()
+                except SpotifyException as e:
+                    raise RuntimeError(explicar_erro_spotify(e))
+            musicas_com_erro, repetidas = [], []
+
+            def enviar_lote():
+                """Envia a fila, CONFERE na playlist o que realmente entrou e só então grava no progresso."""
+                itens = list(fila_lote)
+                del fila_lote[:]
+                if not itens:
+                    return [], []
+                ids = [i['sp_id'] for i in itens]
+                self.log(f'   📦 Enviando lote de {len(itens)} música(s)...', 'info')
+                try:
+                    postar_itens(ids)
+                except Exception as e:
+                    registrar_erro_em_arquivo()
+                    self.log(f'   ⚠️ O lote deu erro ({erro_legivel(e)}). Vou conferir o que entrou...', 'aviso')
+
+                depois = contar_playlist() if baseline['ok'] else None
+                if depois is not None and baseline['n'] is not None and depois - baseline['n'] == len(ids):
+                    confirmadas, falhas = itens, []
+                    baseline['n'] = depois
+                else:
+                    confirmadas, ausentes = verificar_presenca(itens)
+                    falhas = []
+                    if ausentes:
+                        self.log(f'   ⚠️ {len(ausentes)} de {len(itens)} não apareceram na playlist. '
+                                 'Reenviando uma a uma...', 'aviso')
+                        reenviadas = []
+                        for it in ausentes:
+                            ok, erro = adicionar_um(it['sp_id'])
+                            if ok:
+                                reenviadas.append(it)
+                            elif erro:
+                                self.log(f'      {erro_legivel(erro)}', 'cinza')
+                        ids_reenv = {i['sp_id'] for i in reenviadas}
+                        falhas = [i for i in ausentes if i['sp_id'] not in ids_reenv]
+                        if reenviadas:
+                            ok2, ausentes2 = verificar_presenca(reenviadas)
+                            confirmadas += ok2
+                            falhas += ausentes2
+                    baseline['n'] = contar_playlist()
+                    baseline['ok'] = baseline['n'] is not None
+
+                for it in confirmadas:
+                    ids_sessao.add(it['sp_id'])
+                    estado['destino_ids'].append(it['sp_id'])
+                    estado['adicionadas'].append(it['chave'])
+                if confirmadas:
+                    salvar_estado(estado)
+                for it in falhas:
+                    ids_sessao.discard(it['sp_id'])
+                    musicas_com_erro.append((it['query'], 'Não confirmada na playlist do Spotify'))
+                    self.log(f'   ❌ Não consegui confirmar: {it["query"]}', 'erro')
+                self.log(f'   ✅ Lote conferido: {len(confirmadas)} de {len(itens)} confirmada(s) na playlist.',
+                         'sucesso' if not falhas else 'aviso')
+                if falhas:
+                    controle.esperar(6, so_cancelamento=True)
+                return confirmadas, falhas
+
+            enviar_ref['fn'] = enviar_lote
+            baseline['n'] = contar_playlist()
+            if baseline['n'] is None and criada_agora:
+                baseline['n'] = 0
+            baseline['ok'] = baseline['n'] is not None
+
+            ja_adicionadas = set(estado.get('adicionadas', []))
+            ja_puladas = set(estado.get('puladas', []))
+            erros_busca_seguidos = 0
+
+            self.log('\n🔎 Procurando as faixas no Spotify...')
+            for i, item in enumerate(faixas, 1):
+                controle.checar()
+                query = item['full']
+                chave = item['chave']
+                track_name = item['name']
+                self.ui(self._ui_progresso, i - 1, len(faixas), query)
+
+                if chave in ja_adicionadas or chave in ja_puladas:
+                    self.log(f'[{i}/{len(faixas)}] ⏩ Já importada: {query}', 'aviso')
+                    continue
+
+                self.log(f'\n[{i}/{len(faixas)}] 🎵 Procurando: "{query}"')
+                sp_id = None
+                duplicada = False
+                encontrados = []
+                vistos_busca = set()
+                em_aprovacao = False
+
+                titulo_busca, artista_extra = _titulo_para_busca(track_name, item['artistas'], item['eh_video'])
+                artista_busca = artista_extra or (_nome_artista_busca(item['artistas'][0]) if item['artistas'] else '')
+
+                try:
+                    consultas = []
+                    for q in ((f'track:"{titulo_busca}" artist:"{artista_busca}"' if artista_busca
+                               else f'track:"{titulo_busca}"'),
+                              f'{titulo_busca} {artista_busca}'.strip(), titulo_busca):
+                        if q and q not in consultas:
+                            consultas.append(q)
+
+                    for q in consultas:
+                        resposta = sp.search(q=q, type='track', limit=10, market=SPOTIFY_MARKET)
+                        erros_busca_seguidos = 0
+                        novos = [r for r in ((resposta.get('tracks') or {}).get('items') or [])
+                                 if r and r.get('id') and r['id'] not in vistos_busca
+                                 and r.get('is_playable') is not False]
+                        for r in novos:
+                            vistos_busca.add(r['id'])
+                        encontrados.extend(novos)
+
+                        for r in novos:
+                            nomes_sp = [a.get('name', '') for a in (r.get('artists') or []) if a.get('name')]
+                            dur_sp_cand = (r.get('duration_ms') or 0) / 1000 or None
+                            if self.validar_resultado(track_name, item['artist'], r.get('name', ''), nomes_sp,
+                                                      item.get('duracao'), dur_sp_cand, item['artistas'],
+                                                      origem_yt=True):
+                                if r['id'] in ids_sessao:
+                                    duplicada = True
+                                else:
+                                    sp_id = r['id']
+                                    self.log(f'   🎯 Match automático -> "{r.get("name", "")}" - "{", ".join(nomes_sp)}"',
+                                             'sucesso')
+                                break
+                        if sp_id or duplicada:
+                            break
+
+                    if not sp_id and not duplicada and encontrados:
+                        candidatos = self.melhores_candidatos_spotify(titulo_busca, artista_busca, encontrados)
+                        pendentes.append({'query': query, 'chave': chave, 'candidatos': candidatos})
+                        em_aprovacao = True
+                        self.log(f'   🕒 Sem certeza ({len(candidatos)} opção(ões) parecida(s)): '
+                                 'vai para a fila de aprovação, pergunto no final.', 'aviso')
+
+                except Exception as e:
+                    registrar_erro_em_arquivo()
+                    erros_busca_seguidos += 1
+                    status = getattr(e, 'http_status', None)
+                    self.log(f'   ⚠️ Erro ao buscar no Spotify: {erro_legivel(e)}', 'aviso')
+                    if status == 401:
+                        raise RuntimeError(explicar_erro_spotify(e))
+                    if status == 429:
+                        self.log('   ⏳ O Spotify pediu calma. Esperando 20 segundos...', 'aviso')
+                        controle.esperar(20, so_cancelamento=True)
+                    if erros_busca_seguidos >= 5:
+                        raise RuntimeError(
+                            'Muitas falhas seguidas ao buscar no Spotify. Veja a mensagem acima '
+                            '(pode ser limite de requisições ou a sessão expirada). '
+                            'O progresso foi salvo e a migração continua de onde parou.')
+
+                if sp_id:
+                    ids_sessao.add(sp_id)  # reserva, para não repetir a mesma faixa no lote
+                    fila_lote.append({'sp_id': sp_id, 'chave': chave, 'query': query})
+                    self.log(f'   ➕ Na fila do lote ({len(fila_lote)}/{TAMANHO_LOTE})', 'sucesso')
+                    if len(fila_lote) >= TAMANHO_LOTE:
+                        enviar_lote()
+                elif duplicada:
+                    self.log('   ⏩ Essa faixa já está na playlist do Spotify (repetida no YouTube Music).', 'aviso')
+                    repetidas.append(query)
+                    estado['puladas'].append(chave)
+                    salvar_estado(estado)
+                elif not em_aprovacao:
+                    if not any(query == q for q, motivo in musicas_com_erro):
+                        self.log('   ⚠️ Não encontrada no Spotify.', 'aviso')
+                        musicas_com_erro.append((query, 'Não encontrada no Spotify'))
+
+                controle.esperar(PAUSA_BUSCA_SPOTIFY)
+
+            if fila_lote:
+                enviar_lote()
+
+            self.ui(self._ui_progresso_fim, f'Item {len(faixas)} de {len(faixas)}',
+                    'Todas as faixas foram processadas.')
+
+            controle.checar()
+            if pendentes:
+                self.ui(self._ui_travar_controles)
+                self.log('\n' + '=' * 60)
+                self.log(f'🕒 {len(pendentes)} faixa(s) precisam da sua aprovação manual '
+                         '(as demais já foram adicionadas).', 'info')
+                for n, p in enumerate(pendentes, 1):
+                    prefixo = f'[{n}/{len(pendentes)}]'
+                    self.ui(self._ui_progresso, n - 1, len(pendentes), p['query'], 'aprovacao')
+                    opcoes = [c for c in p['candidatos'] if c['sp_id'] not in ids_sessao]
+                    if not opcoes:
+                        self.log(f'{prefixo} ⏩ Essas versões já estão na playlist: {p["query"]}', 'aviso')
+                        musicas_com_erro.append((p['query'], 'Versão encontrada já estava na playlist'))
+                        continue
+
+                    escolhida = self.escolher_versao(n, len(pendentes), p['query'], opcoes,
+                                                     origem='YouTube Music')
+                    if escolhida is None:
+                        self.log(f'{prefixo} ❌ Rejeitada pelo usuário: {p["query"]}', 'erro')
+                        musicas_com_erro.append((p['query'], 'Rejeitada pelo usuário'))
+                        continue
+
+                    ids_sessao.add(escolhida['sp_id'])
+                    fila_lote.append({'sp_id': escolhida['sp_id'], 'chave': p['chave'], 'query': p['query']})
+                    confirmadas, _falhas = enviar_lote()
+                    if confirmadas:
+                        self.log(f'{prefixo} 👉 Aprovada manualmente e adicionada: {p["query"]} '
+                                 f'("{escolhida["yt_title"]}")', 'sucesso')
+                        controle.esperar(0.5, so_cancelamento=True)
+                    else:
+                        self.log(f'{prefixo} ⚠️ Não consegui adicionar: {p["query"]}', 'erro')
+
+            self.log('\n' + '=' * 60)
+            self.ui(self._ui_progresso_fim, 'Migração concluída',
+                    f'{len(estado["adicionadas"])} música(s) adicionada(s) à playlist.')
+            self.log('🎉 PROCESSO FINALIZADO 🎉', 'sucesso')
+            self.log(f'📊 Total no YouTube Music: {total_itens}')
+            self.log(f'✅ Adicionadas: {len(estado["adicionadas"])}', 'sucesso')
+            if repetidas:
+                self.log(f'⏩ Repetidas (já estavam na playlist): {len(repetidas)}', 'aviso')
+            total_falhas = len(musicas_com_erro) + len(indisponiveis)
+            if total_falhas > 0:
+                self.log(f'⚠️ Erros/Ignoradas: {total_falhas}', 'erro')
+            else:
+                self.log('⚠️ Erros/Ignoradas: 0', 'sucesso')
+            self.log('=' * 60 + '\n')
+
+            if musicas_com_erro:
+                self.log('📄 ITENS REJEITADOS OU NÃO ENCONTRADOS:', 'aviso')
+                for item_erro, motivo in musicas_com_erro:
+                    self.log(f' - {item_erro} ({motivo})', 'erro')
+            if indisponiveis:
+                self.log('\n🚫 MÚSICAS INDISPONÍVEIS NO YOUTUBE MUSIC:', 'cinza')
+                for item_ind in indisponiveis:
+                    self.log(f' - {item_ind} (Indisponível no YouTube Music)', 'cinza')
+
+        except MigracaoPausada:
+            if fila_lote and enviar_ref.get('fn'):
+                try:
+                    self.log('📦 Enviando as músicas já escolhidas antes de pausar...', 'info')
+                    enviar_ref['fn']()
+                except Exception:
+                    registrar_erro_em_arquivo()
+            self.ui(self._ui_progresso_status, 'Migração pausada',
+                    'O progresso foi salvo. Inicie de novo com o mesmo nome de playlist para retomar.')
+            if estado is None or not sp_playlist_id:
+                self.log('\n⏸️ Migração pausada antes de começar a adicionar músicas. Nada foi criado.', 'aviso')
+            else:
+                self.log(f'\n⏸️ Migração PAUSADA. Progresso salvo: {len(estado["adicionadas"])} '
+                         'música(s) já adicionada(s).', 'aviso')
+                if pendentes:
+                    self.log(f'   {len(pendentes)} faixa(s) que esperavam aprovação serão reavaliadas ao retomar.', 'cinza')
+                self.log(f"▶ Para retomar, inicie de novo com o MESMO link e o MESMO nome de playlist ('{nome_playlist_destino}').", 'info')
+        except MigracaoCancelada:
+            self.ui(self._ui_progresso_reset, 'Migração cancelada', 'O progresso foi apagado.')
+            if ARQUIVO_ESTADO and os.path.exists(ARQUIVO_ESTADO):
+                try:
+                    os.remove(ARQUIVO_ESTADO)
+                except OSError as e:
+                    self.log(f'⚠️ Não consegui apagar o arquivo de progresso: {e}', 'erro')
+            self.log('\n🛑 Migração CANCELADA. O arquivo de progresso foi apagado.', 'aviso')
+            if sp_playlist_id:
+                self.log(f"ℹ️ A playlist '{nome_playlist_destino}' já criada continua no Spotify "
+                         '(com as músicas que já tinham sido adicionadas). O app não a apagou: '
+                         'se não quiser mais, remova-a por lá.', 'aviso')
+        except Exception as e:
+            registrar_erro_em_arquivo()
+            self.ui(self._ui_progresso_status, 'Migração interrompida', 'Veja os detalhes no registro abaixo.')
+            if isinstance(e, RuntimeError):      # já vem com a mensagem pronta
+                msg_erro = str(e)
+            elif isinstance(e, SpotifyException):
+                msg_erro = explicar_erro_spotify(e)
+            else:
+                msg_erro = explicar_erro(e)
+            self.log(f'\n❌ Ocorreu um erro: {msg_erro}', 'erro')
         finally:
             self.ui(self._ui_migracao_terminada, controle)
 
