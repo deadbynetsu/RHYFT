@@ -28,8 +28,12 @@ Depois apague `segredos-para-o-github.txt` do computador.
 
 ## Primeiro uso
 
-1. **Spotify:** use o mesmo Client ID da versão para PC e autorize pelo navegador.
-2. **YouTube Music:** no PC, abra **Vincular o YouTube Music → Copiar para o celular** e importe o texto no app mobile. Esse texto pode conter cookies de login e deve ser tratado como senha.
-3. Escolha o sentido da migração, cole o link da playlist e toque em **Iniciar migração**.
+1. **Spotify:** use seu Client ID e autorize pelo navegador do próprio celular.
+2. **YouTube Music:** toque em **Vincular / gerenciar**. Na primeira vez, informe um OAuth Client ID e Client Secret do Google do tipo **TVs and Limited Input devices**, com a **YouTube Data API v3** ativada. O app gera um código, abre o Google no próprio celular e detecta automaticamente quando a autorização termina.
+3. Depois do primeiro login, as credenciais do cliente OAuth ficam guardadas na pasta privada do app, então as próximas vinculações exigem apenas tocar em **Entrar com Google**.
+4. O método antigo de importar a sessão do computador continua disponível como **Plano B**, mas não é mais o fluxo principal.
+5. Escolha o sentido da migração, cole o link da playlist e toque em **Iniciar migração**.
+
+> Desde novembro de 2024, o YouTube Music/ytmusicapi exige um Client ID e Client Secret próprios para o fluxo OAuth. Por isso o app não consegue oferecer um login direto sem essas credenciais do Google.
 
 Deixe o app aberto enquanto a migração acontece; o Android pode pausar aplicativos em segundo plano.
