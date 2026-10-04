@@ -1,0 +1,41 @@
+name: Publish Clean Windows v1.4.0
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/publish-clean-windows.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      WINDOWS_RUN_ID: "37227993659"
+      VERSION: v1.4.0
+
+    steps:
+      - name: Baixar novo build Windows
+        run: |
+          mkdir -p downloaded release-assets
+          gh run download "$WINDOWS_RUN_ID" --repo "$REPO" --dir downloaded
+
+      - name: Preparar arquivos
+        run: |
+          WINZIP=$(find downloaded -type f -name 'MigradorPlaylists-windows.zip' | head -n1)
+          WINSHA=$(find downloaded -type f -name 'MigradorPlaylists-windows.zip.sha256' | head -n1)
+          EXESHA=$(find downloaded -type f -name 'MigradorPlaylists.exe.sha256' | head -n1)
+          test -n "$WINZIP" || { echo "ZIP Windows não encontrado"; exit 1; }
+          test -n "$WINSHA" || { echo "SHA do ZIP não encontrado"; exit 1; }
+          test -n "$EXESHA" || { echo "SHA do EXE não encontrado"; exit 1; }
+          cp "$WINZIP" release-assets/MigradorPlaylists-windows.zip
+          cp "$WINSHA" release-assets/MigradorPlaylists-windows.zip.sha256
+          cp "$EXESHA" release-assets/MigradorPlaylists.exe.sha256
+
+      - name: Substituir Windows na Release v1.4.0
+        run: gh release upload "$VERSION" release-assets/* --repo "$REPO" --clobber
