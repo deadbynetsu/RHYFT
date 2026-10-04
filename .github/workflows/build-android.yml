@@ -1,0 +1,98 @@
+name: Build Android (APK)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configurar assinatura fixa (se houver segredos)
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          faltando=""
+          if [ -z "$KEYSTORE_PASSWORD" ]; then faltando="$faltando ANDROID_KEYSTORE_PASSWORD"; fi
+          if [ -z "$KEY_PASSWORD" ]; then faltando="$faltando ANDROID_KEY_PASSWORD"; fi
+          if [ -z "$KEY_ALIAS" ]; then faltando="$faltando ANDROID_KEY_ALIAS"; fi
+          if [ -n "$faltando" ]; then
+            echo "::error title=Segredos incompletos::Faltam:$faltando"
+            exit 1
+          fi
+          if ! printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/migrador-chave.jks" 2>/dev/null || [ ! -s "$RUNNER_TEMP/migrador-chave.jks" ]; then
+            echo "::error title=Chave inválida::ANDROID_KEYSTORE_BASE64 não é base64 válido."
+            exit 1
+          fi
+          echo "FLET_ANDROID_SIGNING_KEY_STORE=$RUNNER_TEMP/migrador-chave.jks" >> "$GITHUB_ENV"
+          echo "FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "FLET_ANDROID_SIGNING_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "FLET_ANDROID_SIGNING_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+
+      - name: Avisar sobre assinatura automática
+        if: env.KEYSTORE_B64 == ''
+        run: echo "::warning title=APK sem chave fixa::Configure os segredos Android descritos em celular/README.md para manter a mesma assinatura entre versões."
+
+      - name: Preparar código compartilhado e versão
+        id: versao
+        run: |
+          cp nucleo.py celular/src/nucleo.py
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import re
+          texto = open('nucleo.py', encoding='utf-8').read()
+          m = re.search(r"APP_VERSION\s*=\s*['\"]([^'\"]+)", texto)
+          if not m:
+              raise SystemExit('APP_VERSION não encontrado em nucleo.py')
+          print(f"numero={m.group(1)}")
+          PY
+
+      - name: Build APK
+        id: build
+        uses: flet-dev/flet-build-action@v1
+        with:
+          target: apk
+          working-directory: celular
+          runner-python-version: "3.13"
+          bundled-python-version: "3.13"
+          build-version: ${{ steps.versao.outputs.numero }}
+          build-number: ${{ github.run_number }}
+
+      - name: Upload Android
+        uses: actions/upload-artifact@v7
+        with:
+          name: MigradorPlaylists-android
+          path: ${{ steps.build.outputs.archive-path }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Preparar APK para Release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          APK=$(find "${{ steps.build.outputs.output-path }}" -type f -name '*.apk' | head -n1)
+          if [ -z "$APK" ]; then
+            echo "::error::APK não encontrado no output do Flet."
+            exit 1
+          fi
+          cp "$APK" MigradorPlaylists-android.apk
+          sha256sum MigradorPlaylists-android.apk | awk '{print $1}' > MigradorPlaylists-android.apk.sha256
+
+      - name: Publicar APK no Release quando houver tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            MigradorPlaylists-android.apk
+            MigradorPlaylists-android.apk.sha256
+          generate_release_notes: true

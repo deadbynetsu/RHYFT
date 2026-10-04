@@ -1,87 +1,58 @@
 # Migrador de Playlists: Spotify ⇄ YouTube Music
 
-Programa gratuito para Windows que copia uma playlist do **Spotify** para o **YouTube Music**
-e também no sentido contrário (**YouTube Music ➔ Spotify**).
-Roda no **seu computador**, com as **suas contas**. Nada passa por servidor do autor: seus
-dados só são enviados ao Spotify e ao YouTube.
+Aplicativo gratuito para migrar playlists entre **Spotify** e **YouTube Music** nos dois sentidos. O projeto tem versão para **Windows** e **Android** usando o mesmo núcleo de migração.
 
 > Projeto independente, sem ligação com Spotify, Google ou YouTube.
 
-## Antes de começar
+## Downloads pelo GitHub Actions
 
-- **Spotify Premium é necessário** para criar o app de acesso (exigência atual do Spotify para
-  desenvolvedores). Só quem cria o app precisa; é uma criação única, de 2 minutos.
-- O Spotify só libera o conteúdo de playlists **suas** ou **colaborativas**. Para migrar a playlist
-  de outra pessoa, crie uma playlist sua e copie as músicas para ela.
-- Você precisa estar logado no YouTube Music (music.youtube.com) em um navegador.
+Cada atualização enviada para a branch `main` dispara dois workflows:
 
-## Baixar e abrir
+- **Build Windows** → gera `MigradorPlaylists-windows.zip`, contendo o executável para Windows.
+- **Build Android (APK)** → gera `flet-apk.zip`, contendo o APK do Android.
 
-1. Vá em **Releases** (barra lateral direita desta página) e baixe `MigradorPlaylists-windows.zip`.
-2. Extraia o zip e abra `MigradorPlaylists.exe`.
-3. O Windows pode mostrar "O Windows protegeu seu computador", porque o programa não tem
-   assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
-   Se preferir, confira o arquivo: o `.sha256` da mesma página deve bater com o resultado de
-   `Get-FileHash MigradorPlaylists-windows.zip` no PowerShell. O código-fonte está todo aqui.
+Abra a aba **Actions**, entre no workflow concluído e baixe o arquivo em **Artifacts**. Quando uma tag `v*` é criada, os arquivos também são publicados em **Releases**.
 
-## Usar (a vinculação é feita uma vez só)
+## Windows
 
-1. **1. Vincular Spotify:** siga o passo a passo da janela (criar um app no painel do Spotify,
-   copiar o *Client ID* e autorizar no navegador).
-2. **2. Vincular YouTube Music:** siga o passo a passo da janela. Em resumo: no music.youtube.com,
-   aperte F12 → aba *Rede*, filtre por `browse`, clique com o botão direito em uma requisição POST
-   → *Copiar* → **Copiar como cURL (bash)** → cole na janela. O programa testa a conexão antes de salvar.
-3. No topo do cartão, escolha o sentido (**Spotify ➔ YouTube Music** ou **YouTube Music ➔ Spotify**),
-   cole o link da playlist de origem, escolha o nome da nova playlist e clique em **Iniciar Migração**.
+1. Baixe `MigradorPlaylists-windows.zip`.
+2. Extraia o ZIP.
+3. Abra `MigradorPlaylists.exe`.
+4. Se o Windows SmartScreen aparecer, use **Mais informações → Executar assim mesmo**.
 
-### YouTube Music ➔ Spotify
+## Android
 
-- A playlist nova é criada no Spotify como **privada**. Se você deixar o nome em branco, usa o nome da playlist original.
-- Esse sentido precisa de uma permissão a mais no Spotify (criar playlists). Se você vinculou o Spotify numa versão
-  anterior, o programa avisa: abra **Gerenciar** no cartão do Spotify e clique em **Vincular e autorizar** de novo
-  (o Client ID continua salvo).
-- Aceita o link do YouTube Music (`music.youtube.com/playlist?list=...`) ou só o código depois de `list=`.
-- O mesmo vídeo repetido na playlist, ou duas versões que são a mesma música no Spotify, entram uma vez só.
+1. Baixe o artifact **MigradorPlaylists-android** no workflow **Build Android (APK)**.
+2. Extraia `flet-apk.zip` e pegue o `.apk`.
+3. Permita a instalação de apps desconhecidos no Android e instale o APK.
 
-### Como as músicas são conferidas
+Para manter a mesma assinatura em atualizações futuras, siga `celular/README.md` e configure os segredos de assinatura.
 
-- Só entra sozinho o que bate em **artista, título, versão (ao vivo, remix, cover...) e duração**. O resto vai para
-  uma fila de **aprovação manual** com até 3 opções.
-- As músicas são enviadas em lotes de 10 e **conferidas na playlist de destino**: nada conta como adicionado sem
-  aparecer lá. O que sumir é reenviado uma a uma; o que continuar faltando aparece na lista de erros.
+## Como usar
 
-Se a migração for interrompida, é só rodar de novo com o mesmo nome de playlist: ela continua de onde parou.
+1. Vincule o Spotify usando seu próprio Client ID.
+2. Vincule o YouTube Music seguindo as instruções do app.
+3. Escolha **Spotify ➔ YouTube Music** ou **YouTube Music ➔ Spotify**.
+4. Cole o link da playlist, escolha o nome da playlist de destino e inicie a migração.
 
-## Privacidade e segurança
+## Estrutura
 
-- Tudo fica em `%APPDATA%\MigradorPlaylists` (tokens, sessão do YouTube Music, progresso).
-- **O texto copiado do YouTube Music contém cookies de login da sua conta Google. Trate como uma
-  senha: não cole em chats, fóruns ou prints.** Para revogar, saia de todas as sessões em
-  *Conta Google → Segurança* ou use **Desvincular** no programa.
-- O programa não tem Client Secret nem credenciais embutidas.
-- No Spotify o programa pede permissão para **ler e criar playlists** na sua conta, e só mexe na playlist que ele mesmo cria.
+- `app.py` — interface desktop.
+- `nucleo.py` — lógica compartilhada entre desktop e mobile.
+- `celular/` — projeto Flet do Android.
+- `.github/workflows/build.yml` — build automático do Windows.
+- `.github/workflows/build-android.yml` — build automático do APK.
+- `ferramentas/gerar_chave_android.py` — gera uma chave de assinatura persistente.
 
-## Problemas comuns
-
-| Sintoma | O que fazer |
-|---|---|
-| "O YouTube não aceitou a sessão copiada" | Refaça o passo 2 logado no music.youtube.com, copiando de uma requisição POST `browse`. |
-| "O Spotify não deixou ler esta playlist" | A playlist não é sua. Copie as músicas para uma playlist sua e use o link dela. |
-| "O Spotify recusou a operação (403)" ao criar a playlist | Autorize de novo em **Gerenciar** (permissão de criar playlists) e confira que o app do painel do Spotify é de uma conta Premium. |
-| "Não consegui abrir a porta 8080" | Feche outro programa que use essa porta e tente vincular de novo. |
-| Qualquer outro erro | Abra um *Issue* aqui e anexe o `erros.log` (em `%APPDATA%\MigradorPlaylists`). **Antes de anexar, confira que não há cookies nem tokens no arquivo.** |
-
-## Rodar pelo código-fonte (Windows, macOS ou Linux)
+## Rodar pelo código-fonte no PC
 
 ```bash
 pip install -r requirements.txt
 python app.py
 ```
 
-Para gerar o `.exe` no Windows: `build.bat`.
+## Privacidade
 
-## Avisos
+Tokens, sessões e progresso ficam no dispositivo do usuário. O projeto não usa servidor próprio para receber credenciais. O acesso ao YouTube Music usa a biblioteca não oficial `ytmusicapi`.
 
-O acesso ao YouTube Music usa a biblioteca não oficial [ytmusicapi](https://github.com/sigma67/ytmusicapi),
-que pode deixar de funcionar se o Google mudar algo, e seu uso pode contrariar os termos do YouTube.
-Use por sua conta e risco. Licença: MIT.
+Licença: MIT.

@@ -5,6 +5,9 @@ build/
 dist/
 *.spec
 
+# Android local signing key and generated secrets
+chave-android/
+
 # NUNCA subir credenciais ou dados pessoais
 spotify_config.json
 spotify_token.json
