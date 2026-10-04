@@ -21,6 +21,7 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      YT_OAUTH_CLIENT_ID: ${{ vars.YT_OAUTH_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v6
@@ -60,6 +61,26 @@ jobs:
           if not m:
               raise SystemExit('APP_VERSION não encontrado em nucleo.py')
           print(f"numero={m.group(1)}")
+          PY
+
+      - name: Preparar Client ID público do Google
+        run: |
+          if [ -z "$YT_OAUTH_CLIENT_ID" ]; then
+            echo "::error title=Client ID ausente::Crie a repository variable YT_OAUTH_CLIENT_ID em Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          cid = os.environ['YT_OAUTH_CLIENT_ID'].strip()
+          if 'apps.googleusercontent.com' not in cid:
+              raise SystemExit('YT_OAUTH_CLIENT_ID inválido.')
+          Path('celular/src/yt_oauth_config.py').write_text(
+              '# Gerado automaticamente durante o build.\n'
+              + 'YT_OAUTH_CLIENT_ID = ' + repr(cid) + '\n',
+              encoding='utf-8',
+          )
+          print('Client ID OAuth configurado para o APK.')
           PY
 
       - name: Build APK
