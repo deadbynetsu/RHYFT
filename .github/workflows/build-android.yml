@@ -21,7 +21,7 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      YT_OAUTH_CLIENT_ID: ${{ vars.YT_OAUTH_CLIENT_ID }}
+      YT_OAUTH_CLIENT_ID: ${{ secrets.YT_OAUTH_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v6
@@ -66,7 +66,7 @@ jobs:
       - name: Preparar Client ID público do Google
         run: |
           if [ -z "$YT_OAUTH_CLIENT_ID" ]; then
-            echo "::error title=Client ID ausente::Crie a repository variable YT_OAUTH_CLIENT_ID em Settings > Secrets and variables > Actions > Variables."
+            echo "::error title=Client ID ausente::O secret YT_OAUTH_CLIENT_ID não foi encontrado em Settings > Secrets and variables > Actions > Secrets."
             exit 1
           fi
           python - <<'PY'
