@@ -22,6 +22,7 @@ jobs:
       KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       YT_OAUTH_CLIENT_ID: ${{ secrets.YT_OAUTH_CLIENT_ID }}
+      YT_OAUTH_CLIENT_SECRET: ${{ secrets.YT_OAUTH_CLIENT_SECRET }}
 
     steps:
       - uses: actions/checkout@v6
@@ -63,24 +64,32 @@ jobs:
           print(f"numero={m.group(1)}")
           PY
 
-      - name: Preparar Client ID público do Google
+      - name: Preparar OAuth do YouTube Music
         run: |
           if [ -z "$YT_OAUTH_CLIENT_ID" ]; then
             echo "::error title=Client ID ausente::O secret YT_OAUTH_CLIENT_ID não foi encontrado em Settings > Secrets and variables > Actions > Secrets."
+            exit 1
+          fi
+          if [ -z "$YT_OAUTH_CLIENT_SECRET" ]; then
+            echo "::error title=Client Secret ausente::O secret YT_OAUTH_CLIENT_SECRET não foi encontrado em Settings > Secrets and variables > Actions > Secrets."
             exit 1
           fi
           python - <<'PY'
           import os
           from pathlib import Path
           cid = os.environ['YT_OAUTH_CLIENT_ID'].strip()
+          secret = os.environ['YT_OAUTH_CLIENT_SECRET'].strip()
           if 'apps.googleusercontent.com' not in cid:
               raise SystemExit('YT_OAUTH_CLIENT_ID inválido.')
+          if not secret:
+              raise SystemExit('YT_OAUTH_CLIENT_SECRET inválido.')
           Path('celular/src/yt_oauth_config.py').write_text(
-              '# Gerado automaticamente durante o build.\n'
-              + 'YT_OAUTH_CLIENT_ID = ' + repr(cid) + '\n',
+              '# Gerado automaticamente durante o build. Não versionar.\n'
+              + 'YT_OAUTH_CLIENT_ID = ' + repr(cid) + '\n'
+              + 'YT_OAUTH_CLIENT_SECRET = ' + repr(secret) + '\n',
               encoding='utf-8',
           )
-          print('Client ID OAuth configurado para o APK.')
+          print('Credenciais OAuth configuradas para o APK.')
           PY
 
       - name: Build APK
