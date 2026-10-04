@@ -1,27 +1,32 @@
 # -*- coding: utf-8 -*-
 """Bootstrap da versão Android.
 
-A autenticação do YouTube Music usa OAuth Device Flow direto no celular.
-As credenciais OAuth do aplicativo são injetadas pelo GitHub Actions durante o build;
-o usuário final só vê o botão "Entrar com Google".
+O YouTube Music usa OAuth 2.0 para aplicativo instalado com PKCE. O usuário final
+só toca em "Entrar com Google". O APK precisa apenas do Client ID público do app;
+nenhuma chave secreta é embutida no aplicativo.
 """
+import base64
+import hashlib
 import os
+import secrets
 import threading
 import time
 import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import flet as ft
+import requests
 from ytmusicapi import OAuthCredentials
 
 try:
-    from yt_oauth_config import YT_OAUTH_CLIENT_ID, YT_OAUTH_CLIENT_SECRET
+    from yt_oauth_config import YT_OAUTH_CLIENT_ID
 except ImportError:
-    # Em desenvolvimento local esse arquivo pode não existir. No APK oficial o
-    # GitHub Actions gera o módulo antes de compilar.
     YT_OAUTH_CLIENT_ID = ''
-    YT_OAUTH_CLIENT_SECRET = ''
 
 _REAL_FLET_RUN = ft.run
+GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+YOUTUBE_SCOPE = 'https://www.googleapis.com/auth/youtube'
 
 
 def _patch_app(target):
@@ -32,19 +37,46 @@ def _patch_app(target):
         return
 
     client_id = str(YT_OAUTH_CLIENT_ID or '').strip()
-    client_secret = str(YT_OAUTH_CLIENT_SECRET or '').strip()
     ytmusic_real = nuc.YTMusic
 
-    def credenciais_oauth():
-        if not client_id or not client_secret:
+    class PKCECredentials(OAuthCredentials):
+        """Só cuida do refresh do token; o login inicial usa Authorization Code + PKCE."""
+
+        def __init__(self):
+            # O Google documenta client_secret como opcional para apps instalados.
+            super().__init__(client_id=client_id, client_secret='')
+
+        def refresh_token(self, refresh_token):
+            resp = requests.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    'client_id': client_id,
+                    'grant_type': 'refresh_token',
+                    'refresh_token': refresh_token,
+                },
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                try:
+                    detalhe = resp.json().get('error_description') or resp.json().get('error')
+                except Exception:
+                    detalhe = resp.text[:200]
+                raise RuntimeError(f'Não consegui renovar a sessão do Google: {detalhe}')
+            dados = resp.json()
+            return {
+                'access_token': dados['access_token'],
+                'expires_in': int(dados.get('expires_in') or 3600),
+            }
+
+    def credenciais_refresh():
+        if not client_id:
             raise RuntimeError(
-                'Este APK foi compilado sem as credenciais do YouTube Music. '
+                'Este APK foi compilado sem o Client ID do Google. '
                 'Baixe novamente a versão oficial pela página de Releases.'
             )
-        return OAuthCredentials(client_id=client_id, client_secret=client_secret)
+        return PKCECredentials()
 
     def criar_ytmusic(auth=None, *args, **kwargs):
-        """Faz o núcleo aceitar tanto cookies antigos quanto OAuth novo."""
         dados = None
         if isinstance(auth, str) and os.path.exists(auth):
             dados = nuc.ler_json(auth, {}) or {}
@@ -52,11 +84,9 @@ def _patch_app(target):
             dados = auth
 
         if isinstance(dados, dict) and dados.get('refresh_token') and dados.get('access_token'):
-            kwargs.setdefault('oauth_credentials', credenciais_oauth())
+            kwargs.setdefault('oauth_credentials', credenciais_refresh())
         return ytmusic_real(auth, *args, **kwargs)
 
-    # O núcleo instancia YTMusic em vários pontos. Esse wrapper garante que o
-    # refresh token OAuth continue funcionando durante toda a migração.
     nuc.YTMusic = criar_ytmusic
 
     def trocar_rotulo_importar(page):
@@ -110,11 +140,9 @@ def _patch_app(target):
     Tela.iniciar = iniciar_novo
 
     def abrir_yt_novo(self, e):
-        codigo = ft.Text('', size=20, weight=ft.FontWeight.BOLD, selectable=True)
         status = ft.Text('', size=12)
-        btn_google = ft.Button(content='Abrir página do Google', disabled=True)
         btn_vincular = ft.Button(content='Entrar com Google', icon=ft.Icons.LOGIN)
-        estado = {'cancelar': threading.Event(), 'url': ''}
+        estado = {'cancelar': threading.Event()}
 
         def avisar(tipo, texto):
             status.value = texto
@@ -125,91 +153,120 @@ def _patch_app(target):
             btn_vincular.disabled = False
             btn_vincular.content = 'Entrar com Google'
 
-        def mostrar_codigo(user_code, url):
-            codigo.value = f'Código: {user_code}'
-            estado['url'] = url
-            btn_google.disabled = False
-            avisar('aviso', 'Autorize sua conta no navegador. O app detecta sozinho quando terminar.')
-
-        async def abrir_google(e):
-            if estado.get('url'):
-                await self.launcher.launch_url(estado['url'])
-
-        btn_google.on_click = abrir_google
-
         def vincular(e):
-            if not client_id or not client_secret:
-                avisar('erro', 'Este APK não contém a configuração OAuth do aplicativo. Baixe novamente pela Release oficial.')
+            if not client_id:
+                avisar('erro', 'Este APK não contém o Client ID do aplicativo. Baixe novamente pela Release oficial.')
                 return
 
             estado['cancelar'].set()
             estado['cancelar'] = threading.Event()
             cancelar = estado['cancelar']
             btn_vincular.disabled = True
-            btn_vincular.content = 'Abrindo Google...'
-            codigo.value = ''
-            btn_google.disabled = True
-            avisar('aviso', 'Preparando o login com Google...')
+            btn_vincular.content = 'Aguardando Google...'
+            avisar('aviso', 'Abrindo o Google. Escolha sua conta e autorize o acesso.')
 
             def trabalho():
+                servidor = None
                 try:
-                    cred = credenciais_oauth()
-                    info = cred.get_code()
-                    if info.get('error'):
-                        raise RuntimeError(str(info.get('error_description') or info['error']))
+                    recebido = {}
 
-                    user_code = str(info.get('user_code', '')).strip()
-                    device_code = str(info.get('device_code', '')).strip()
-                    base_url = str(info.get('verification_url') or 'https://www.google.com/device').strip()
-                    if not user_code or not device_code:
-                        raise RuntimeError('O Google não devolveu um código de autorização válido.')
+                    class Handler(BaseHTTPRequestHandler):
+                        def do_GET(self):
+                            consulta = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                            if 'code' not in consulta and 'error' not in consulta:
+                                self.send_response(404)
+                                self.end_headers()
+                                return
+                            recebido.update(consulta)
+                            ok = 'code' in consulta and 'error' not in consulta
+                            corpo = (
+                                '<html><head><meta charset="utf-8"></head><body style="font-family:Arial;text-align:center;margin-top:15%">'
+                                + ('<h2>✅ YouTube Music vinculado</h2><p>Pode fechar esta aba e voltar ao aplicativo.</p>'
+                                   if ok else '<h2>❌ Autorização não concluída</h2><p>Volte ao aplicativo e tente novamente.</p>')
+                                + '</body></html>'
+                            ).encode('utf-8')
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'text/html; charset=utf-8')
+                            self.send_header('Content-Length', str(len(corpo)))
+                            self.end_headers()
+                            self.wfile.write(corpo)
 
-                    if 'user_code=' not in base_url:
-                        sep = '&' if '?' in base_url else '?'
-                        url = base_url + sep + urllib.parse.urlencode({'user_code': user_code})
-                    else:
-                        url = base_url
+                        def log_message(self, *args):
+                            pass
 
-                    self.postar(mostrar_codigo, user_code, url)
-                    self._abrir_url_de_thread(url)
+                    servidor = HTTPServer(('127.0.0.1', 0), Handler)
+                    servidor.timeout = 1
+                    porta = servidor.server_address[1]
+                    redirect_uri = f'http://127.0.0.1:{porta}'
 
-                    intervalo = max(5, int(info.get('interval') or 5))
-                    limite = time.time() + max(60, int(info.get('expires_in') or 600))
-                    token = None
-                    while time.time() < limite:
-                        if cancelar.wait(intervalo):
+                    verifier = secrets.token_urlsafe(64)
+                    challenge = base64.urlsafe_b64encode(
+                        hashlib.sha256(verifier.encode('ascii')).digest()
+                    ).rstrip(b'=').decode('ascii')
+                    state = secrets.token_urlsafe(24)
+
+                    url = GOOGLE_AUTH_URL + '?' + urllib.parse.urlencode({
+                        'client_id': client_id,
+                        'redirect_uri': redirect_uri,
+                        'response_type': 'code',
+                        'scope': YOUTUBE_SCOPE,
+                        'access_type': 'offline',
+                        'prompt': 'consent',
+                        'state': state,
+                        'code_challenge': challenge,
+                        'code_challenge_method': 'S256',
+                    })
+
+                    if not self._abrir_url_de_thread(url):
+                        raise RuntimeError('Não consegui abrir o navegador do celular.')
+
+                    limite = time.time() + 300
+                    while not recebido and time.time() < limite:
+                        if cancelar.is_set():
                             return
-                        resposta = cred.token_from_code(device_code)
-                        erro = resposta.get('error') if isinstance(resposta, dict) else None
-                        if not erro and resposta.get('access_token') and resposta.get('refresh_token'):
-                            token = resposta
-                            break
-                        if erro == 'authorization_pending':
-                            continue
-                        if erro == 'slow_down':
-                            intervalo += 5
-                            continue
-                        if erro == 'access_denied':
-                            raise RuntimeError('A autorização foi cancelada no Google.')
-                        if erro == 'expired_token':
-                            raise RuntimeError('O código expirou. Toque em “Entrar com Google” e tente de novo.')
-                        if erro:
-                            raise RuntimeError(str(resposta.get('error_description') or erro))
+                        servidor.handle_request()
 
-                    if token is None:
-                        raise TimeoutError('O código expirou antes da autorização terminar. Tente de novo.')
+                    if not recebido:
+                        raise TimeoutError('Tempo esgotado esperando a autorização do Google. Tente novamente.')
+                    if 'error' in recebido:
+                        raise RuntimeError(f"O Google recusou a autorização: {recebido['error'][0]}")
+                    if recebido.get('state', [None])[0] != state:
+                        raise RuntimeError('Resposta inválida do Google. Tente novamente.')
 
-                    permitidos = {
-                        'scope', 'token_type', 'access_token', 'refresh_token',
-                        'expires_at', 'expires_in',
+                    codigo = recebido['code'][0]
+                    resp = requests.post(
+                        GOOGLE_TOKEN_URL,
+                        data={
+                            'client_id': client_id,
+                            'code': codigo,
+                            'code_verifier': verifier,
+                            'redirect_uri': redirect_uri,
+                            'grant_type': 'authorization_code',
+                        },
+                        timeout=30,
+                    )
+                    if resp.status_code != 200:
+                        try:
+                            detalhe = resp.json().get('error_description') or resp.json().get('error')
+                        except Exception:
+                            detalhe = resp.text[:200]
+                        raise RuntimeError(f'O Google recusou o login: {detalhe}')
+
+                    token = resp.json()
+                    if not token.get('access_token') or not token.get('refresh_token'):
+                        raise RuntimeError('O Google não devolveu uma sessão permanente. Tente autorizar novamente.')
+
+                    token_limpo = {
+                        'scope': str(token.get('scope') or YOUTUBE_SCOPE),
+                        'token_type': str(token.get('token_type') or 'Bearer'),
+                        'access_token': token['access_token'],
+                        'refresh_token': token['refresh_token'],
+                        'expires_in': int(token.get('expires_in') or 3600),
+                        'expires_at': int(time.time()) + int(token.get('expires_in') or 3600),
                     }
-                    token_limpo = {k: v for k, v in token.items() if k in permitidos}
-                    token_limpo.setdefault('scope', 'https://www.googleapis.com/auth/youtube')
-                    token_limpo.setdefault('token_type', 'Bearer')
-                    token_limpo['expires_at'] = int(time.time()) + int(token_limpo.get('expires_in') or 3600)
                     nuc.gravar_json(nuc.YT_AUTH_PATH, token_limpo)
 
-                    yt = ytmusic_real(nuc.YT_AUTH_PATH, oauth_credentials=credenciais_oauth())
+                    yt = ytmusic_real(nuc.YT_AUTH_PATH, oauth_credentials=credenciais_refresh())
                     try:
                         info_conta = yt.get_account_info() or {}
                         nome = info_conta.get('accountName') or 'conta conectada'
@@ -218,13 +275,17 @@ def _patch_app(target):
                         nome = 'conta conectada'
 
                     self.postar(avisar, 'ok', f'✓ YouTube Music vinculado: {nome}')
-                    self.postar(setattr, codigo, 'value', '')
-                    self.postar(setattr, btn_google, 'disabled', True)
                     self.postar(liberar_botao)
                 except Exception as ex:
                     nuc.registrar_erro_em_arquivo()
                     self.postar(avisar, 'erro', f'Não foi possível vincular: {ex}')
                     self.postar(liberar_botao)
+                finally:
+                    if servidor is not None:
+                        try:
+                            servidor.server_close()
+                        except Exception:
+                            pass
 
             threading.Thread(target=trabalho, daemon=True).start()
 
@@ -237,8 +298,6 @@ def _patch_app(target):
                     os.remove(nuc.YT_AUTH_PATH)
                 except OSError:
                     pass
-            codigo.value = ''
-            btn_google.disabled = True
             avisar('aviso', 'YouTube Music desvinculado.')
 
         def fechar(e):
@@ -249,10 +308,8 @@ def _patch_app(target):
             modal=True,
             title=ft.Text('Vincular o YouTube Music'),
             content=ft.Column([
-                ft.Text('Toque em “Entrar com Google”, escolha sua conta e autorize o acesso. Só isso.', size=13),
+                ft.Text('Toque em “Entrar com Google”, escolha sua conta e autorize. Não precisa copiar códigos nem configurar nada.', size=13),
                 btn_vincular,
-                codigo,
-                btn_google,
                 status,
             ], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
             actions=[
@@ -269,7 +326,5 @@ def _patched_run(target, *args, **kwargs):
     return _REAL_FLET_RUN(target, *args, **kwargs)
 
 
-# main.py chama ft.run(main) no final. Interceptamos essa chamada, aplicamos o
-# patch acima e só então iniciamos o Flet normalmente.
 ft.run = _patched_run
 import main  # noqa: E402,F401
