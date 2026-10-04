@@ -19,15 +19,15 @@ jobs:
           echo "numero=$(grep -oP "APP_VERSION = '\K[^']+" nucleo.py)" >> "$GITHUB_OUTPUT"
 
       - name: Build APK
-  id: build
-  uses: flet-dev/flet-build-action@v2  # Update from v1 to v2
-  with:
-    target: apk
-    working-directory: celular
-    runner-python-version: "3.13"
-    bundled-python-version: "3.13"
-    build-version: ${{ steps.versao.outputs.numero }}
-    build-number: ${{ github.run_number }}
+        id: build
+        uses: flet-dev/flet-build-action@v2
+        with:
+          target: apk
+          working-directory: celular
+          runner-python-version: "3.13"
+          bundled-python-version: "3.13"
+          build-version: ${{ steps.versao.outputs.numero }}
+          build-number: ${{ github.run_number }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
@@ -36,11 +36,11 @@ jobs:
           archive: false
           if-no-files-found: error
 
-  # iPhone: precisa de macOS e de uma conta Apple Developer (paga) para assinar. Veja celular/README.md.
-  # ipa:
-  #   runs-on: macos-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - run: cp nucleo.py celular/src/nucleo.py
-  #     - uses: flet-dev/flet-build-action@v1
-  #       with: { target: ipa, working-directory: celular, bundled-python-version: "3.13" }
+   # iPhone: precisa de macOS e de uma conta Apple Developer (paga) para assinar. Veja celular/README.md.
+   # ipa:
+   #   runs-on: macos-latest
+   #   steps:
+   #     - uses: actions/checkout@v6
+   #     - run: cp nucleo.py celular/src/nucleo.py
+   #     - uses: flet-dev/flet-build-action@v1
+   #       with: { target: ipa, working-directory: celular, bundled-python-version: "3.13" }
