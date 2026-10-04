@@ -10,7 +10,6 @@ on:
       - "nucleo.py"
       - "requirements.txt"
       - "build.bat"
-      - "ferramentas/gerar_version_info_windows.py"
       - ".github/workflows/build.yml"
 
 permissions:
@@ -29,26 +28,43 @@ jobs:
           cache: pip
 
       - name: Instalar dependências
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt "pyinstaller>=6.11,<7"
+          python -m pip install -r requirements.txt "nuitka>=2.7,<3" ordered-set zstandard
 
-      - name: Gerar metadados do executável
-        run: python ferramentas/gerar_version_info_windows.py
+      - name: Compilar Windows com Nuitka/MSVC
+        shell: pwsh
+        run: |
+          $version = (python -c "import nucleo; print(nucleo.APP_VERSION)").Trim()
+          if (-not $version) { throw "APP_VERSION não encontrado" }
+          $winVersion = "$version.0"
 
-      - name: Compilar Windows sem UPX
-        run: >-
-          python -m PyInstaller
-          --clean
-          --noconfirm
-          --noupx
-          --noconsole
-          --onedir
-          --name MigradorPlaylists
-          --version-file build_meta/version_info.txt
-          --collect-all customtkinter
-          --collect-all ytmusicapi
-          app.py
+          python -m nuitka `
+            --mode=standalone `
+            --msvc=latest `
+            --assume-yes-for-downloads `
+            --windows-console-mode=disable `
+            --output-dir=build-nuitka `
+            --output-filename=MigradorPlaylists.exe `
+            --windows-company-name=deadbynetsu `
+            --windows-product-name="Migrador de Playlists" `
+            --windows-file-description="Migrador Spotify e YouTube Music" `
+            --windows-file-version="$winVersion" `
+            --windows-product-version="$winVersion" `
+            --include-package-data=customtkinter `
+            app.py
+
+          $compiled = Get-ChildItem build-nuitka -Directory -Filter "*.dist" | Select-Object -First 1
+          if (-not $compiled) { throw "Pasta .dist do Nuitka não encontrada" }
+
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          if (Test-Path "dist\MigradorPlaylists") { Remove-Item "dist\MigradorPlaylists" -Recurse -Force }
+          Move-Item $compiled.FullName "dist\MigradorPlaylists"
+
+          if (-not (Test-Path "dist\MigradorPlaylists\MigradorPlaylists.exe")) {
+            throw "MigradorPlaylists.exe não foi gerado"
+          }
 
       - name: Verificar build com Microsoft Defender
         shell: pwsh
@@ -59,13 +75,7 @@ jobs:
             exit 0
           }
 
-          try {
-            Start-MpScan -ScanType CustomScan -ScanPath $dist -ErrorAction Stop
-          } catch {
-            Write-Warning "Não foi possível iniciar a verificação do Defender: $($_.Exception.Message)"
-            exit 0
-          }
-
+          Start-MpScan -ScanType CustomScan -ScanPath $dist -ErrorAction Stop
           Start-Sleep -Seconds 2
           $detections = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
             $_.Resources -and (($_.Resources -join "`n") -like "*$dist*")
