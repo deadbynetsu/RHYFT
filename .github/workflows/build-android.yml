@@ -11,7 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Um núcleo só: o celular usa o MESMO nucleo.py do app do computador.
       - name: Copiar o núcleo para o app de celular
         id: versao
         run: |
@@ -20,7 +19,7 @@ jobs:
 
       - name: Build APK
         id: build
-        uses: flet-dev/flet-build-action@v2
+        uses: flet-dev/flet-build-action@v1
         with:
           target: apk
           working-directory: celular
@@ -35,12 +34,3 @@ jobs:
           path: ${{ steps.build.outputs.archive-path }}
           archive: false
           if-no-files-found: error
-
-   # iPhone: precisa de macOS e de uma conta Apple Developer (paga) para assinar. Veja celular/README.md.
-   # ipa:
-   #   runs-on: macos-latest
-   #   steps:
-   #     - uses: actions/checkout@v6
-   #     - run: cp nucleo.py celular/src/nucleo.py
-   #     - uses: flet-dev/flet-build-action@v1
-   #       with: { target: ipa, working-directory: celular, bundled-python-version: "3.13" }
