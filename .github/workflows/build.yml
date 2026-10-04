@@ -5,6 +5,13 @@ on:
   push:
     branches: ["main"]
     tags: ["v*"]
+    paths:
+      - "app.py"
+      - "nucleo.py"
+      - "requirements.txt"
+      - "build.bat"
+      - "ferramentas/gerar_version_info_windows.py"
+      - ".github/workflows/build.yml"
 
 permissions:
   contents: write
@@ -22,16 +29,61 @@ jobs:
           cache: pip
 
       - name: Instalar dependências
-        run: python -m pip install -r requirements.txt pyinstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "pyinstaller>=6.11,<7"
 
-      - name: Compilar Windows
-        run: python -m PyInstaller --noconsole --onedir --name MigradorPlaylists --collect-all customtkinter --collect-all ytmusicapi app.py
+      - name: Gerar metadados do executável
+        run: python ferramentas/gerar_version_info_windows.py
 
-      - name: Compactar e gerar checksum
+      - name: Compilar Windows sem UPX
+        run: >-
+          python -m PyInstaller
+          --clean
+          --noconfirm
+          --noupx
+          --noconsole
+          --onedir
+          --name MigradorPlaylists
+          --version-file build_meta/version_info.txt
+          --collect-all customtkinter
+          --collect-all ytmusicapi
+          app.py
+
+      - name: Verificar build com Microsoft Defender
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\MigradorPlaylists -DestinationPath MigradorPlaylists-windows.zip
-          (Get-FileHash MigradorPlaylists-windows.zip -Algorithm SHA256).Hash | Out-File -Encoding ascii MigradorPlaylists-windows.zip.sha256
+          $dist = (Resolve-Path "dist\MigradorPlaylists").Path
+          if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
+            Write-Warning "Microsoft Defender não está disponível neste runner."
+            exit 0
+          }
+
+          try {
+            Start-MpScan -ScanType CustomScan -ScanPath $dist -ErrorAction Stop
+          } catch {
+            Write-Warning "Não foi possível iniciar a verificação do Defender: $($_.Exception.Message)"
+            exit 0
+          }
+
+          Start-Sleep -Seconds 2
+          $detections = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+            $_.Resources -and (($_.Resources -join "`n") -like "*$dist*")
+          }
+
+          if ($detections) {
+            $detections | Format-List | Out-String | Write-Host
+            throw "Microsoft Defender detectou uma ameaça no build."
+          }
+
+          Write-Host "Microsoft Defender: nenhuma ameaça detectada no build."
+
+      - name: Compactar e gerar checksums
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\MigradorPlaylists -DestinationPath MigradorPlaylists-windows.zip -CompressionLevel Optimal
+          (Get-FileHash MigradorPlaylists-windows.zip -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii MigradorPlaylists-windows.zip.sha256
+          (Get-FileHash dist\MigradorPlaylists\MigradorPlaylists.exe -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii MigradorPlaylists.exe.sha256
 
       - name: Upload Windows
         uses: actions/upload-artifact@v7
@@ -40,6 +92,7 @@ jobs:
           path: |
             MigradorPlaylists-windows.zip
             MigradorPlaylists-windows.zip.sha256
+            MigradorPlaylists.exe.sha256
           if-no-files-found: error
 
       - name: Publicar no Release quando houver tag
@@ -49,4 +102,5 @@ jobs:
           files: |
             MigradorPlaylists-windows.zip
             MigradorPlaylists-windows.zip.sha256
+            MigradorPlaylists.exe.sha256
           generate_release_notes: true
