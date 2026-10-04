@@ -1,0 +1,62 @@
+name: Publish v1.4.0 Release
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/publish-v1.4.0.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      VERSION: v1.4.0
+      WINDOWS_RUN_ID: "37222756217"
+      ANDROID_RUN_ID: "37222756227"
+
+    steps:
+      - name: Baixar artifacts já compilados
+        run: |
+          mkdir -p downloaded/windows downloaded/android release-assets
+          gh run download "$WINDOWS_RUN_ID" --repo "$REPO" --dir downloaded/windows
+          gh run download "$ANDROID_RUN_ID" --repo "$REPO" --dir downloaded/android
+
+      - name: Preparar arquivos do Windows
+        run: |
+          WINZIP=$(find downloaded/windows -type f -name 'MigradorPlaylists-windows.zip' | head -n1)
+          WINSHA=$(find downloaded/windows -type f -name 'MigradorPlaylists-windows.zip.sha256' | head -n1)
+          test -n "$WINZIP" || { echo "ZIP do Windows não encontrado"; exit 1; }
+          cp "$WINZIP" release-assets/MigradorPlaylists-windows.zip
+          if [ -n "$WINSHA" ]; then
+            cp "$WINSHA" release-assets/MigradorPlaylists-windows.zip.sha256
+          else
+            sha256sum release-assets/MigradorPlaylists-windows.zip | awk '{print $1}' > release-assets/MigradorPlaylists-windows.zip.sha256
+          fi
+
+      - name: Preparar APK do Android
+        run: |
+          APK=$(find downloaded/android -type f -name '*.apk' | head -n1)
+          if [ -z "$APK" ]; then
+            ZIP=$(find downloaded/android -type f -name '*.zip' | head -n1)
+            test -n "$ZIP" || { echo "APK/ZIP Android não encontrado"; exit 1; }
+            mkdir -p extracted-android
+            unzip -q "$ZIP" -d extracted-android
+            APK=$(find extracted-android -type f -name '*.apk' | head -n1)
+          fi
+          test -n "$APK" || { echo "APK Android não encontrado dentro do artifact"; exit 1; }
+          cp "$APK" release-assets/MigradorPlaylists-android.apk
+          sha256sum release-assets/MigradorPlaylists-android.apk | awk '{print $1}' > release-assets/MigradorPlaylists-android.apk.sha256
+
+      - name: Criar Release v1.4.0 e enviar arquivos
+        run: |
+          if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$VERSION" release-assets/* --repo "$REPO" --clobber
+          else
+            gh release create "$VERSION" release-assets/* --repo "$REPO" --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
+          fi
