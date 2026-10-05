@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Migrar online — Migrador de Playlists</title>
+  <meta name="description" content="Migre playlists entre Spotify e YouTube Music diretamente pelo navegador.">
+  <meta name="theme-color" content="#0B0C12">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/migrar.js" defer></script>
+</head>
+<body class="migrate-page">
+  <div class="noise" aria-hidden="true"></div>
+  <header class="site-header compact"><nav class="nav shell"><a class="brand" href="/"><span class="brand-mark"><span>↔</span></span><span>Migrador de Playlists</span></a><div class="nav-links static"><a href="/">Início</a><a href="/privacidade.html">Privacidade</a><a href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator" target="_blank" rel="noreferrer">GitHub</a></div></nav></header>
+
+  <main class="migrate-shell shell">
+    <section class="migrate-heading">
+      <div class="eyebrow"><span class="status-dot"></span> MIGRAÇÃO ONLINE</div>
+      <h1>Leve sua playlist sem instalar nada.</h1>
+      <p>Conecte suas contas pelas páginas oficiais, escolha o sentido e acompanhe tudo por aqui.</p>
+    </section>
+
+    <section class="account-grid" aria-label="Contas conectadas">
+      <article class="account-card" id="spotify-account">
+        <div class="account-brand spotify"><span>♪</span></div>
+        <div class="account-info"><small>SPOTIFY</small><strong id="spotify-status">Verificando…</strong><span id="spotify-detail">Aguarde</span></div>
+        <div class="account-actions"><a class="btn btn-small btn-secondary" id="spotify-connect" href="/api/spotify/start">Conectar</a><button class="text-action" id="spotify-logout" hidden>Desconectar</button></div>
+      </article>
+      <article class="account-card" id="youtube-account">
+        <div class="account-brand youtube"><span>▶</span></div>
+        <div class="account-info"><small>GOOGLE / YOUTUBE</small><strong id="youtube-status">Verificando…</strong><span id="youtube-detail">Aguarde</span></div>
+        <div class="account-actions"><a class="btn btn-small btn-secondary" id="youtube-connect" href="/api/google/start">Conectar</a><button class="text-action" id="youtube-logout" hidden>Desconectar</button></div>
+      </article>
+    </section>
+
+    <section class="migrator-panel">
+      <div class="direction-switch" role="tablist" aria-label="Sentido da migração">
+        <button class="direction active" data-direction="spotify-youtube" role="tab" aria-selected="true"><span class="dir-sp">♪</span> Spotify <b>→</b> YouTube Music</button>
+        <button class="direction" data-direction="youtube-spotify" role="tab" aria-selected="false"><span class="dir-yt">▶</span> YouTube Music <b>→</b> Spotify</button>
+      </div>
+
+      <div class="migrate-form">
+        <label for="playlist-input" id="playlist-label">Link ou ID da playlist do Spotify</label>
+        <div class="input-wrap"><input id="playlist-input" autocomplete="off" placeholder="https://open.spotify.com/playlist/…"><span class="input-icon">↗</span></div>
+        <label for="playlist-name">Nome da nova playlist</label>
+        <input id="playlist-name" maxlength="100" placeholder="Minha Playlist Importada">
+        <div class="form-note"><span>🔒</span><p>As senhas nunca passam pelo Migrador. O acesso é feito por OAuth e as sessões Web ficam em cookies HttpOnly criptografados.</p></div>
+        <div class="migration-actions">
+          <button class="btn btn-primary btn-large" id="start-migration">▶ Iniciar migração</button>
+          <button class="btn btn-secondary" id="pause-migration" disabled>Ⅱ Pausar</button>
+          <button class="btn btn-ghost" id="cancel-migration" disabled>Cancelar</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="progress-panel" id="progress-panel" hidden aria-live="polite">
+      <div class="progress-head"><div><small>PROGRESSO</small><h2 id="progress-title">Preparando migração…</h2></div><strong id="progress-percent">0%</strong></div>
+      <div class="progress-track"><span id="progress-bar"></span></div>
+      <div class="progress-meta"><span id="progress-count">0 de 0</span><span id="progress-current">—</span></div>
+      <div class="live-log" id="live-log"></div>
+    </section>
+
+    <section class="pending-panel" id="pending-panel" hidden>
+      <div class="section-heading left"><div class="eyebrow">PRECISA DA SUA ESCOLHA</div><h2>Algumas faixas ficaram incertas.</h2><p>Escolha a versão correta ou ignore. Nada é adicionado automaticamente quando a confiança está baixa.</p></div>
+      <div id="pending-list" class="pending-list"></div>
+    </section>
+
+    <section class="result-panel" id="result-panel" hidden>
+      <div class="result-icon">✓</div><div><small>MIGRAÇÃO FINALIZADA</small><h2 id="result-title">Playlist criada</h2><p id="result-summary"></p></div><a class="btn btn-primary" id="result-link" href="#" target="_blank" rel="noreferrer">Abrir playlist</a>
+    </section>
+
+    <aside class="quota-note"><strong>Sobre limites das plataformas</strong><p>A migração Web usa as APIs oficiais. Google e Spotify aplicam cotas e limites de uso; se uma cota for atingida, o app informa o motivo e você pode tentar mais tarde. As versões Windows e Android continuam disponíveis como alternativa.</p></aside>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <footer class="footer mini"><div class="shell footer-bottom"><span>Projeto independente de Spotify, Google e YouTube.</span><span><a href="/privacidade.html">Privacidade</a> · <a href="/termos.html">Termos</a></span></div></footer>
+</body>
+</html>

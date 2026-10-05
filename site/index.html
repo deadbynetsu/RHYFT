@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Migrador de Playlists — Spotify ⇄ YouTube Music</title>
+  <meta name="description" content="Migre suas playlists entre Spotify e YouTube Music no Windows, Android ou diretamente pelo navegador.">
+  <meta name="theme-color" content="#0B0C12">
+  <meta property="og:title" content="Migrador de Playlists — Spotify ⇄ YouTube Music">
+  <meta property="og:description" content="Migre playlists entre Spotify e YouTube Music com versões para Windows, Android e Web.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/script.js" defer></script>
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="site-header" id="top">
+    <nav class="nav shell" aria-label="Navegação principal">
+      <a class="brand" href="/" aria-label="Migrador de Playlists, início">
+        <span class="brand-mark" aria-hidden="true"><span>↔</span></span>
+        <span>Migrador de Playlists</span>
+      </a>
+      <button class="nav-toggle" aria-label="Abrir menu" aria-expanded="false">☰</button>
+      <div class="nav-links">
+        <a href="#recursos">Recursos</a>
+        <a href="#como-funciona">Como funciona</a>
+        <a href="#downloads">Downloads</a>
+        <a href="/privacidade.html">Privacidade</a>
+        <a class="nav-github" href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="btn btn-small btn-primary" href="/migrar.html">Migrar online</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero shell">
+      <div class="hero-copy reveal">
+        <div class="eyebrow"><span class="status-dot"></span> Grátis · Open source · Windows · Android · Web</div>
+        <h1>Suas playlists.<br><span>Na plataforma que você quiser.</span></h1>
+        <p class="hero-sub">Transfira suas músicas entre Spotify e YouTube Music com uma experiência simples, acompanhável e sem depender de ferramentas complicadas.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary btn-large" href="/migrar.html">Migrar agora no navegador <span>→</span></a>
+          <a class="btn btn-secondary btn-large download-windows" href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest">Baixar aplicativo</a>
+        </div>
+        <div class="release-line"><span class="release-version">Buscando versão…</span><span>•</span><span class="release-date">GitHub Releases</span></div>
+      </div>
+
+      <div class="hero-visual reveal" aria-label="Prévia do Migrador de Playlists">
+        <div class="ambient ambient-green"></div>
+        <div class="ambient ambient-red"></div>
+        <div class="app-window">
+          <div class="window-bar"><div class="window-dots"><i></i><i></i><i></i></div><span>Migrador de Playlists</span><b class="release-version">v—</b></div>
+          <div class="window-body">
+            <div class="transfer-pill">
+              <span class="platform platform-sp"><i>♪</i> Spotify</span>
+              <span class="swap">⇄</span>
+              <span class="platform platform-yt"><i>▶</i> YouTube Music</span>
+            </div>
+            <label>Playlist de origem</label>
+            <div class="fake-input"><span>open.spotify.com/playlist/...</span><b>✓</b></div>
+            <label>Nome da nova playlist</label>
+            <div class="fake-input"><span>Minha Playlist Importada</span></div>
+            <button class="fake-start" type="button" disabled><span>▶</span> Iniciar migração</button>
+            <div class="fake-progress"><span></span></div>
+            <div class="fake-log">
+              <p><em>✓</em> Playlist carregada</p>
+              <p><em>✓</em> 42 músicas encontradas</p>
+              <p class="active"><i>♫</i> Encontrando versões correspondentes…</p>
+            </div>
+          </div>
+        </div>
+        <div class="floating-chip chip-one">Spotify → YT Music</div>
+        <div class="floating-chip chip-two">42 faixas</div>
+      </div>
+    </section>
+
+    <section class="flow-strip shell reveal" aria-label="Fluxo de migração">
+      <div class="flow-platform spotify-box"><span>♪</span><div><strong>Spotify</strong><small>Playlist de origem</small></div></div>
+      <div class="flow-line"><i></i><i></i><i></i><b>→</b></div>
+      <div class="flow-stack"><span></span><span></span><span></span></div>
+      <div class="flow-line reverse"><i></i><i></i><i></i><b>←</b></div>
+      <div class="flow-platform youtube-box"><span>▶</span><div><strong>YouTube Music</strong><small>Playlist de destino</small></div></div>
+    </section>
+
+    <section class="section shell" id="recursos">
+      <div class="section-heading reveal">
+        <div class="eyebrow">FEITO PARA MIGRAR, NÃO PARA COMPLICAR</div>
+        <h2>Dois serviços. Um fluxo simples.</h2>
+        <p>O mesmo projeto funciona no computador, no Android e agora também pode operar direto pelo navegador.</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card reveal"><div class="feature-icon">⇄</div><h3>Migração bidirecional</h3><p>Spotify → YouTube Music ou YouTube Music → Spotify. Você escolhe o sentido.</p></article>
+        <article class="feature-card reveal"><div class="feature-icon">⌕</div><h3>Correspondência inteligente</h3><p>Busca candidatos e compara título, artista e duração para evitar versões erradas sempre que possível.</p></article>
+        <article class="feature-card reveal"><div class="feature-icon">◴</div><h3>Progresso visível</h3><p>Acompanhe cada etapa e saiba quais faixas foram encontradas, adicionadas ou precisam da sua atenção.</p></article>
+        <article class="feature-card reveal"><div class="feature-icon">▣</div><h3>Windows e Android</h3><p>Prefere aplicativo nativo? Os builds oficiais continuam disponíveis nas Releases do GitHub.</p></article>
+        <article class="feature-card reveal"><div class="feature-icon">◇</div><h3>Privacidade por projeto</h3><p>O app nativo guarda tokens e progresso no dispositivo. Na Web, sessões ficam em cookies protegidos e não são expostas ao JavaScript.</p></article>
+        <article class="feature-card reveal"><div class="feature-icon">⌘</div><h3>Open source</h3><p>O código é público, auditável e distribuído sob licença MIT.</p></article>
+      </div>
+    </section>
+
+    <section class="section shell how" id="como-funciona">
+      <div class="section-heading reveal"><div class="eyebrow">COMO FUNCIONA</div><h2>Da playlist original à nova em quatro etapas.</h2></div>
+      <div class="steps">
+        <article class="step reveal"><span>01</span><h3>Conecte as plataformas</h3><p>Autorize Spotify e Google usando as telas oficiais de login.</p></article>
+        <article class="step reveal"><span>02</span><h3>Cole a playlist</h3><p>Use o link ou ID da playlist que você quer levar para a outra plataforma.</p></article>
+        <article class="step reveal"><span>03</span><h3>Escolha o destino</h3><p>Dê um nome à nova playlist e deixe o migrador localizar as músicas.</p></article>
+        <article class="step reveal"><span>04</span><h3>Revise e conclua</h3><p>Resultados incertos ficam separados para você decidir antes de adicionar.</p></article>
+      </div>
+    </section>
+
+    <section class="section shell demo-section">
+      <div class="demo-card reveal">
+        <div class="demo-copy"><div class="eyebrow">DEMONSTRAÇÃO</div><h2>Veja o fluxo antes de conectar sua conta.</h2><p>Esta demonstração é apenas visual. Nenhuma conta ou API é acessada.</p><button class="btn btn-primary" id="demo-start">Iniciar demonstração</button></div>
+        <div class="demo-terminal" aria-live="polite">
+          <div class="terminal-top"><span></span><span></span><span></span><b>migração</b></div>
+          <div class="terminal-body" id="demo-log"><p class="muted">Aguardando início…</p></div>
+          <div class="terminal-progress"><span id="demo-progress"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section shell" id="downloads">
+      <div class="section-heading reveal"><div class="eyebrow">DOWNLOADS</div><h2>Use do jeito que combina com você.</h2><p>As versões são lidas automaticamente da Release mais recente no GitHub.</p></div>
+      <div class="download-grid">
+        <article class="download-card reveal"><div class="os-icon">⊞</div><div><small>WINDOWS</small><h3>Migrador para PC</h3><p>Aplicativo desktop completo, distribuído em ZIP.</p></div><a class="btn btn-secondary download-windows" href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest">Baixar para Windows</a></article>
+        <article class="download-card reveal"><div class="os-icon">◉</div><div><small>ANDROID</small><h3>Migrador para celular</h3><p>APK oficial compilado automaticamente pelo GitHub Actions.</p></div><a class="btn btn-secondary download-android" href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest">Baixar APK</a></article>
+        <article class="download-card web-card reveal"><div class="os-icon">↗</div><div><small>WEB</small><h3>Migrar online</h3><p>Sem instalar nada. Conecte as duas contas e faça a migração no navegador.</p></div><a class="btn btn-primary" href="/migrar.html">Abrir migrador Web</a></article>
+      </div>
+      <p class="release-foot reveal">Versão detectada: <strong class="release-version">—</strong> · <a href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases" target="_blank" rel="noreferrer">ver todas as Releases</a></p>
+    </section>
+
+    <section class="section shell privacy-callout reveal">
+      <div><div class="eyebrow">PRIVACIDADE</div><h2>Suas contas continuam sob seu controle.</h2><p>O Migrador usa somente as autorizações necessárias para ler e criar playlists durante as ações que você solicita. Você pode revogar o acesso pelas plataformas a qualquer momento.</p></div>
+      <a class="btn btn-secondary" href="/privacidade.html">Ler Política de Privacidade</a>
+    </section>
+
+    <section class="section shell faq" id="faq">
+      <div class="section-heading reveal"><div class="eyebrow">FAQ</div><h2>Perguntas frequentes.</h2></div>
+      <div class="faq-list">
+        <details class="reveal"><summary>O Migrador é gratuito?</summary><p>Sim. O projeto é gratuito e open source.</p></details>
+        <details class="reveal"><summary>Funciona sem instalar aplicativo?</summary><p>Sim. A versão Web permite migrar pelo navegador. Windows e Android continuam disponíveis para quem preferir app nativo.</p></details>
+        <details class="reveal"><summary>Preciso entregar minha senha?</summary><p>Não. O login é feito nas páginas oficiais do Spotify e do Google por OAuth. O Migrador recebe tokens de autorização, não sua senha.</p></details>
+        <details class="reveal"><summary>Posso migrar nos dois sentidos?</summary><p>Sim: Spotify → YouTube Music e YouTube Music → Spotify.</p></details>
+        <details class="reveal"><summary>É um aplicativo oficial do Spotify ou Google?</summary><p>Não. É um projeto independente e não possui afiliação oficial com Spotify, Google, YouTube ou YouTube Music.</p></details>
+        <details class="reveal"><summary>Onde posso ver o código?</summary><p>No repositório público <a href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator" target="_blank" rel="noreferrer">deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator</a>.</p></details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell footer-grid"><div><a class="brand" href="/"><span class="brand-mark"><span>↔</span></span><span>Migrador de Playlists</span></a><p>Spotify ⇄ YouTube Music</p></div><div class="footer-links"><a href="/migrar.html">Migrar online</a><a href="#downloads">Downloads</a><a href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator">GitHub</a><a href="/privacidade.html">Privacidade</a><a href="/termos.html">Termos</a></div></div>
+    <div class="shell footer-bottom"><span>Projeto independente. Spotify, YouTube e YouTube Music são marcas de seus respectivos proprietários.</span><span>Feito por deadbynetsu</span></div>
+  </footer>
+</body>
+</html>
