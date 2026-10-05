@@ -1,85 +1,129 @@
-# Migrador de Playlists: Spotify ⇄ YouTube Music
+<div align="center">
 
-Aplicativo gratuito e open source para migrar playlists entre **Spotify** e **YouTube Music** nos dois sentidos. O projeto possui versões para **Windows**, **Android** e uma **versão Web** preparada para Netlify.
+# 🎵 Migrador de Playlists
+
+### Spotify ⇄ YouTube Music
+
+Migre suas playlists entre **Spotify** e **YouTube Music** de forma simples, rápida e organizada.
+
+[![Site](https://img.shields.io/badge/Abrir%20site-migrador--playlists.netlify.app-00d084?style=for-the-badge&logo=netlify&logoColor=white)](https://migrador-playlists.netlify.app/)
+[![Migrar online](https://img.shields.io/badge/Migrar%20online-Abrir%20no%20navegador-7c5cff?style=for-the-badge)](https://migrador-playlists.netlify.app/migrar.html)
+[![Releases](https://img.shields.io/badge/Downloads-GitHub%20Releases-24292f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest)
+
+**Windows · Android · Web · Gratuito · Open Source**
 
 > Projeto independente, sem ligação oficial com Spotify, Google, YouTube ou YouTube Music.
 
-## Formas de usar
+</div>
 
-- **Windows** — aplicativo desktop.
-- **Android** — APK assinado e compilado pelo GitHub Actions.
-- **Web** — site em `site/` com migração diretamente pelo navegador e backend serverless em `netlify/functions/`.
+---
 
-## Downloads
+## ✨ O projeto
 
-Os builds nativos são gerados automaticamente pelos workflows do GitHub Actions e publicados nas Releases da versão correspondente.
+O **Migrador de Playlists** permite transferir playlists nos dois sentidos:
 
-- **Build Windows** → `MigradorPlaylists-windows.zip`
-- **Build Android (APK)** → `MigradorPlaylists-android.apk`
+- **Spotify → YouTube Music**
+- **YouTube Music → Spotify**
 
-A página Web consulta a Release mais recente no GitHub e atualiza automaticamente os botões de download.
+Você pode usar pelo navegador ou baixar a versão nativa para Windows e Android.
 
-## Windows
+### 🌐 Site oficial
 
-1. Baixe `MigradorPlaylists-windows.zip` na Release mais recente.
-2. Extraia o ZIP.
-3. Abra `MigradorPlaylists.exe`.
+**https://migrador-playlists.netlify.app/**
 
-## Android
+No site você encontra a versão Web, downloads atualizados, Política de Privacidade e Termos de Serviço.
 
-1. Baixe `MigradorPlaylists-android.apk` na Release mais recente.
-2. Permita a instalação do APK no Android.
-3. Abra o aplicativo e conecte suas contas.
+---
 
-Para manter a mesma assinatura nas atualizações, veja `celular/README.md`.
+## 🚀 Recursos
 
-## Web
+- Migração bidirecional entre Spotify e YouTube Music
+- Correspondência automática de músicas
+- Revisão manual quando uma correspondência fica incerta
+- Progresso da migração em tempo real
+- Login via OAuth
+- Versões para **Windows**, **Android** e **Web**
+- Downloads atualizados automaticamente pela Release mais recente
+- Projeto gratuito e open source
 
-O site contém:
+---
 
-- landing page profissional;
-- downloads automáticos da Release mais recente;
-- Política de Privacidade e Termos de Serviço;
-- OAuth de Spotify e Google/YouTube;
-- migração Spotify → YouTube e YouTube → Spotify;
-- correspondência automática com revisão manual para resultados incertos;
-- sessões protegidas em cookies HttpOnly criptografados.
+## 💻 Formas de usar
 
-A versão Web usa as APIs oficiais para operações autenticadas. Veja **[WEB_DEPLOY.md](WEB_DEPLOY.md)** para publicar no Netlify e configurar OAuth com segurança.
+| Plataforma | Como usar |
+|---|---|
+| 🌐 **Web** | [Abrir o Migrador Online](https://migrador-playlists.netlify.app/migrar.html) |
+| 🪟 **Windows** | [Baixar a versão mais recente](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest) |
+| 🤖 **Android** | [Baixar o APK mais recente](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest) |
 
-## Como usar
+Os builds de Windows e Android são gerados automaticamente pelo **GitHub Actions** e publicados nas Releases.
 
-1. Conecte Spotify e Google/YouTube.
-2. Escolha **Spotify ➔ YouTube Music** ou **YouTube Music ➔ Spotify**.
-3. Cole o link/ID da playlist.
+---
+
+## 🔄 Como funciona
+
+1. Conecte suas contas do Spotify e Google/YouTube.
+2. Escolha o sentido da migração.
+3. Cole o link ou ID da playlist.
 4. Escolha o nome da playlist de destino.
-5. Inicie a migração e revise eventuais correspondências incertas.
+5. Inicie a migração.
+6. Revise apenas as músicas que precisarem de confirmação.
 
-## Estrutura
+---
 
-- `app.py` — interface desktop.
-- `nucleo.py` — lógica compartilhada dos apps nativos.
-- `celular/` — versão Android em Flet.
-- `site/` — site público e interface da migração Web.
-- `netlify/functions/api.js` — OAuth e integração serverless da versão Web.
-- `netlify.toml` — configuração de deploy, rotas e headers de segurança.
-- `WEB_DEPLOY.md` — guia de configuração do site e OAuth.
-- `.github/workflows/build.yml` — build automático do Windows.
-- `.github/workflows/build-android.yml` — build automático do APK.
+## 🔐 Privacidade
 
-## Rodar pelo código-fonte no PC
+O projeto usa OAuth para autenticação — sua senha do Spotify ou Google não é entregue ao Migrador.
+
+Nos aplicativos nativos, tokens, configurações e progresso ficam no dispositivo. Na versão Web, as sessões são protegidas em cookies **HttpOnly** criptografados e os tokens não ficam expostos ao JavaScript da página.
+
+- [Política de Privacidade](https://migrador-playlists.netlify.app/privacidade.html)
+- [Termos de Serviço](https://migrador-playlists.netlify.app/termos.html)
+
+---
+
+## 🛠️ Tecnologias
+
+- **Python**
+- **Flet**
+- **Spotify Web API**
+- **YouTube Data API**
+- **Netlify Functions**
+- **GitHub Actions**
+
+---
+
+## 📁 Estrutura do projeto
+
+```text
+app.py                     # Interface desktop
+nucleo.py                  # Lógica compartilhada dos apps nativos
+celular/                    # Aplicativo Android em Flet
+site/                       # Site oficial e Migrador Web
+netlify/functions/api.js    # OAuth e integrações da versão Web
+netlify.toml                # Configuração do deploy no Netlify
+.github/workflows/          # Builds automáticos
+```
+
+---
+
+## 👨‍💻 Rodar pelo código-fonte
 
 ```bash
 pip install -r requirements.txt
 python app.py
 ```
 
-## Privacidade
+---
 
-Nos aplicativos nativos, tokens, configurações e progresso ficam no dispositivo do usuário. Na versão Web, tokens OAuth são armazenados em cookies HttpOnly criptografados e não são expostos ao JavaScript da página. A versão Web não exige banco de dados para armazenar contas ou histórico de usuários.
+## 📄 Licença
 
-Leia também `site/privacidade.html`.
+Distribuído sob a licença **MIT**.
 
-## Licença
+<div align="center">
 
-MIT.
+Feito por **[deadbynetsu](https://github.com/deadbynetsu)**
+
+[🌐 Site](https://migrador-playlists.netlify.app/) · [🎵 Migrar online](https://migrador-playlists.netlify.app/migrar.html) · [📦 Releases](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest)
+
+</div>
