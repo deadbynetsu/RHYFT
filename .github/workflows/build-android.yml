@@ -134,7 +134,7 @@ jobs:
       - name: Upload Android
         uses: actions/upload-artifact@v7
         with:
-          name: MigradorPlaylists-android
+          name: RHYFT-android
           path: ${{ steps.build.outputs.archive-path }}
           archive: false
           if-no-files-found: error
@@ -146,8 +146,8 @@ jobs:
             echo "::error::APK não encontrado no output do Flet."
             exit 1
           fi
-          cp "$APK" MigradorPlaylists-android.apk
-          sha256sum MigradorPlaylists-android.apk | awk '{print $1}' > MigradorPlaylists-android.apk.sha256
+          cp "$APK" RHYFT-android.apk
+          sha256sum RHYFT-android.apk | awk '{print $1}' > RHYFT-android.apk.sha256
 
       - name: Publicar APK na Release da versão
         env:
@@ -156,15 +156,17 @@ jobs:
           TAG="v${{ steps.versao.outputs.numero }}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              MigradorPlaylists-android.apk \
-              MigradorPlaylists-android.apk.sha256 \
+              RHYFT-android.apk \
+              RHYFT-android.apk.sha256 \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
-            echo "APK atualizado na Release $TAG."
+            gh release delete-asset "$TAG" MigradorPlaylists-android.apk --repo "$GITHUB_REPOSITORY" -y >/dev/null 2>&1 || true
+            gh release delete-asset "$TAG" MigradorPlaylists-android.apk.sha256 --repo "$GITHUB_REPOSITORY" -y >/dev/null 2>&1 || true
+            echo "APK RHYFT atualizado na Release $TAG."
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             gh release create "$TAG" \
-              MigradorPlaylists-android.apk \
-              MigradorPlaylists-android.apk.sha256 \
+              RHYFT-android.apk \
+              RHYFT-android.apk.sha256 \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" \
               --generate-notes
