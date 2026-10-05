@@ -46,10 +46,10 @@ jobs:
             --assume-yes-for-downloads `
             --windows-console-mode=disable `
             --output-dir=build-nuitka `
-            --output-filename=MigradorPlaylists.exe `
+            --output-filename=RHYFT.exe `
             --windows-company-name=deadbynetsu `
-            --windows-product-name="Migrador de Playlists" `
-            --windows-file-description="Migrador Spotify e YouTube Music" `
+            --windows-product-name="RHYFT" `
+            --windows-file-description="RHYFT - Spotify e YouTube Music" `
             --windows-file-version="$winVersion" `
             --windows-product-version="$winVersion" `
             --include-package-data=customtkinter `
@@ -59,17 +59,17 @@ jobs:
           if (-not $compiled) { throw "Pasta .dist do Nuitka não encontrada" }
 
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          if (Test-Path "dist\MigradorPlaylists") { Remove-Item "dist\MigradorPlaylists" -Recurse -Force }
-          Move-Item $compiled.FullName "dist\MigradorPlaylists"
+          if (Test-Path "dist\RHYFT") { Remove-Item "dist\RHYFT" -Recurse -Force }
+          Move-Item $compiled.FullName "dist\RHYFT"
 
-          if (-not (Test-Path "dist\MigradorPlaylists\MigradorPlaylists.exe")) {
-            throw "MigradorPlaylists.exe não foi gerado"
+          if (-not (Test-Path "dist\RHYFT\RHYFT.exe")) {
+            throw "RHYFT.exe não foi gerado"
           }
 
       - name: Verificar build com Microsoft Defender
         shell: pwsh
         run: |
-          $dist = (Resolve-Path "dist\MigradorPlaylists").Path
+          $dist = (Resolve-Path "dist\RHYFT").Path
           if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
             Write-Warning "Microsoft Defender não está disponível neste runner."
             exit 0
@@ -91,26 +91,36 @@ jobs:
       - name: Compactar e gerar checksums
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\MigradorPlaylists -DestinationPath MigradorPlaylists-windows.zip -CompressionLevel Optimal
-          (Get-FileHash MigradorPlaylists-windows.zip -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii MigradorPlaylists-windows.zip.sha256
-          (Get-FileHash dist\MigradorPlaylists\MigradorPlaylists.exe -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii MigradorPlaylists.exe.sha256
+          Compress-Archive -Path dist\RHYFT -DestinationPath RHYFT-windows.zip -CompressionLevel Optimal
+          (Get-FileHash RHYFT-windows.zip -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii RHYFT-windows.zip.sha256
+          (Get-FileHash dist\RHYFT\RHYFT.exe -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii RHYFT.exe.sha256
 
       - name: Upload Windows
         uses: actions/upload-artifact@v7
         with:
-          name: MigradorPlaylists-windows
+          name: RHYFT-windows
           path: |
-            MigradorPlaylists-windows.zip
-            MigradorPlaylists-windows.zip.sha256
-            MigradorPlaylists.exe.sha256
+            RHYFT-windows.zip
+            RHYFT-windows.zip.sha256
+            RHYFT.exe.sha256
           if-no-files-found: error
 
-      - name: Publicar no Release quando houver tag
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            MigradorPlaylists-windows.zip
-            MigradorPlaylists-windows.zip.sha256
-            MigradorPlaylists.exe.sha256
-          generate_release_notes: true
+      - name: Publicar Windows na Release da versão
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (python -c "import nucleo; print(nucleo.APP_VERSION)").Trim()
+          $tag = "v$version"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
+            gh release delete-asset $tag MigradorPlaylists-windows.zip --repo $env:GITHUB_REPOSITORY -y 2>$null
+            gh release delete-asset $tag MigradorPlaylists-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
+            gh release delete-asset $tag MigradorPlaylists.exe.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
+            Write-Host "Windows RHYFT atualizado na Release $tag."
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            gh release create $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
+          } else {
+            Write-Warning "Release $tag ainda não existe; os arquivos ficaram nos Artifacts."
+          }
