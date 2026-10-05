@@ -21,6 +21,14 @@ YOUTUBE = '#FF4B55'
 ACCENT = '#8BB8FF'
 WHITE = '#F7F8FB'
 
+SOCIAL_LINKS = [
+    ('GitHub', 'https://github.com/deadbynetsu', '#E6EDF3', ft.Icons.CODE),
+    ('Instagram', 'https://www.instagram.com/deadbynetsu.dev/', '#F472B6', ft.Icons.PHOTO_CAMERA),
+    ('TikTok', 'https://www.tiktok.com/@deadbynetsu', '#5EEAD4', ft.Icons.MUSIC_NOTE),
+    ('Discord', 'https://discord.gg/s9b7R5F6Uh', '#818CF8', ft.Icons.GROUP),
+    ('YouTube', 'https://www.youtube.com/@DeadbyNeTsU', '#F87171', ft.Icons.PLAY_CIRCLE),
+]
+
 
 def _style_button(button, *, bg=SURFACE_2, fg=TEXT, border=BORDER, radius=14, padding=13):
     """Aplica um estilo simples, estável e consistente aos botões Flet 1.x."""
@@ -349,6 +357,44 @@ def apply_mobile_ui(target):
         )
         self._mobile_log_panel.visible = bool(self.lista_log.controls)
 
+        # Links iguais aos da versão de PC, mas organizados para toque no celular.
+        def abrir_link(url):
+            async def acao(e):
+                await self.launcher.launch_url(url)
+            return acao
+
+        def social_button(nome, url, cor, icon):
+            botao = ft.Button(
+                content=nome,
+                icon=icon,
+                on_click=abrir_link(url),
+                expand=True,
+            )
+            try:
+                botao.icon_color = cor
+            except Exception:
+                pass
+            return _style_button(botao, bg=SURFACE_2, fg=TEXT, border=BORDER, padding=11)
+
+        sociais = [social_button(nome, url, cor, icon) for nome, url, cor, icon in SOCIAL_LINKS]
+        comunidade = _card(
+            ft.Column(
+                controls=[
+                    _section_label('LINKS & COMUNIDADE'),
+                    ft.Text('Acompanhe o projeto', size=13, weight=ft.FontWeight.BOLD, color=TEXT),
+                    ft.Text('Os mesmos links da versão para PC, agora direto no app.', size=10, color=MUTED),
+                    ft.Row(controls=[sociais[0], sociais[1]], spacing=9),
+                    ft.Row(controls=[sociais[2], sociais[3]], spacing=9),
+                    ft.Row(controls=[sociais[4]]),
+                ],
+                spacing=9,
+            ),
+            padding=14,
+            radius=17,
+            bgcolor=SURFACE,
+            border=BORDER_SOFT,
+        )
+
         # Atualizações ficam no fim: acessíveis, mas sem ocupar o topo da experiência.
         atualizacoes = _card(
             ft.Column(
@@ -396,6 +442,7 @@ def apply_mobile_ui(target):
                 migracao,
                 progresso,
                 self._mobile_log_panel,
+                comunidade,
                 atualizacoes,
                 rodape,
             ],
