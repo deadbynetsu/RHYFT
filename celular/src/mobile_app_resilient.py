@@ -1,21 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Entrada Android com rede OAuth mais resiliente.
+"""Entrada Android com rede OAuth e empacotamento mais resilientes.
 
 Alguns aparelhos/redes perdem a resolução DNS por alguns segundos ao alternar
-entre o app e o navegador durante o OAuth. Este wrapper mantém o fluxo atual,
-mas repete chamadas de rede e usa endpoints alternativos oficiais do Google.
+entre o app e o navegador durante o OAuth. Além disso, builds Android podem não
+incluir os arquivos .mo de tradução do ytmusicapi. Este wrapper trata ambos os
+casos sem exigir configuração extra do usuário.
 """
+import gettext
 import time
 
 import requests
 
 _REAL_POST = requests.post
 _REAL_SESSION_POST = requests.sessions.Session.post
+_REAL_TRANSLATION = gettext.translation
 
 _DEVICE_PRIMARY = "https://oauth2.googleapis.com/device/code"
 _DEVICE_FALLBACK = "https://www.youtube.com/o/oauth2/device/code"
 _TOKEN_PRIMARY = "https://oauth2.googleapis.com/token"
 _TOKEN_FALLBACK = "https://www.googleapis.com/oauth2/v4/token"
+
+
+def _translation_resiliente(domain, *args, **kwargs):
+    """Evita crash se o bundle Android não contiver locales do ytmusicapi."""
+    try:
+        return _REAL_TRANSLATION(domain, *args, **kwargs)
+    except FileNotFoundError:
+        if domain != "base":
+            raise
+        # ytmusicapi usa o domínio "base" apenas para textos/localização.
+        # Sem o .mo, os textos originais em inglês continuam funcionando.
+        kwargs["fallback"] = True
+        return _REAL_TRANSLATION(domain, *args, **kwargs)
+
+
+# Precisa ser aplicado antes de importar mobile_app/ytmusicapi.
+gettext.translation = _translation_resiliente
 
 
 def _candidatos(url):
