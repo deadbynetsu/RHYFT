@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Entrada Android com rede OAuth e empacotamento mais resilientes.
+"""Entrada Android com rede OAuth e YouTube autenticado mais resilientes.
 
-Alguns aparelhos/redes perdem a resolução DNS por alguns segundos ao alternar
-entre o app e o navegador durante o OAuth. Além disso, builds Android podem não
-incluir os arquivos .mo de tradução do ytmusicapi. Este wrapper trata ambos os
-casos sem exigir configuração extra do usuário.
+No Android:
+- trata falhas temporárias de DNS ao voltar do navegador;
+- evita crash se o bundle não trouxer traduções do ytmusicapi;
+- usa ytmusicapi sem login apenas para busca pública;
+- usa YouTube Data API v3 oficial para operações autenticadas.
+
+A última parte contorna o bug aberto do ytmusicapi em que chamadas OAuth ao
+/youtubei podem retornar HTTP 400 "Request contains an invalid argument".
 """
 import gettext
 import time
@@ -28,13 +32,11 @@ def _translation_resiliente(domain, *args, **kwargs):
     except FileNotFoundError:
         if domain != "base":
             raise
-        # ytmusicapi usa o domínio "base" apenas para textos/localização.
-        # Sem o .mo, os textos originais em inglês continuam funcionando.
         kwargs["fallback"] = True
         return _REAL_TRANSLATION(domain, *args, **kwargs)
 
 
-# Precisa ser aplicado antes de importar mobile_app/ytmusicapi.
+# Precisa ser aplicado antes de importar ytmusicapi.
 gettext.translation = _translation_resiliente
 
 
@@ -60,7 +62,6 @@ def _com_retentativa(chamar, url, args, kwargs):
             return chamar(destino, *args, **kwargs)
         except requests.RequestException as ex:
             ultimo_erro = ex
-            # Ao abrir/fechar o navegador o Android pode ficar alguns segundos sem DNS.
             time.sleep(min(5, 1 + tentativa))
 
     if ultimo_erro is not None:
@@ -79,10 +80,16 @@ def _session_post_resiliente(self, url, *args, **kwargs):
     return _com_retentativa(chamar, url, args, kwargs)
 
 
-# Cobre tanto requests.post usado pelo app quanto Session.post usado pelo ytmusicapi
-# para renovar o token depois que o usuário já estiver conectado.
 requests.post = _post_resiliente
 requests.sessions.Session.post = _session_post_resiliente
+
+# O núcleo importa `YTMusic` de ytmusicapi. Trocamos somente no entrypoint do
+# Android, então a versão Windows continua exatamente como antes.
+import ytmusicapi  # noqa: E402
+from youtube_official import HybridYTMusic  # noqa: E402
+
+HybridYTMusic.PUBLIC_CLASS = ytmusicapi.YTMusic
+ytmusicapi.YTMusic = HybridYTMusic
 
 # mobile_app aplica o patch de interface e inicia o Flet.
 import mobile_app  # noqa: E402,F401
