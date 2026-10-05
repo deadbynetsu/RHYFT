@@ -1,48 +1,71 @@
 # Migrador de Playlists: Spotify ⇄ YouTube Music
 
-Aplicativo gratuito para migrar playlists entre **Spotify** e **YouTube Music** nos dois sentidos. O projeto tem versão para **Windows** e **Android** usando o mesmo núcleo de migração.
+Aplicativo gratuito e open source para migrar playlists entre **Spotify** e **YouTube Music** nos dois sentidos. O projeto possui versões para **Windows**, **Android** e uma **versão Web** preparada para Netlify.
 
-> Projeto independente, sem ligação com Spotify, Google ou YouTube.
+> Projeto independente, sem ligação oficial com Spotify, Google, YouTube ou YouTube Music.
 
-## Downloads pelo GitHub Actions
+## Formas de usar
 
-Cada atualização enviada para a branch `main` dispara dois workflows:
+- **Windows** — aplicativo desktop.
+- **Android** — APK assinado e compilado pelo GitHub Actions.
+- **Web** — site em `site/` com migração diretamente pelo navegador e backend serverless em `netlify/functions/`.
 
-- **Build Windows** → gera `MigradorPlaylists-windows.zip`, contendo o executável para Windows.
-- **Build Android (APK)** → gera `flet-apk.zip`, contendo o APK do Android.
+## Downloads
 
-Abra a aba **Actions**, entre no workflow concluído e baixe o arquivo em **Artifacts**. Quando uma tag `v*` é criada, os arquivos também são publicados em **Releases**.
+Os builds nativos são gerados automaticamente pelos workflows do GitHub Actions e publicados nas Releases da versão correspondente.
+
+- **Build Windows** → `MigradorPlaylists-windows.zip`
+- **Build Android (APK)** → `MigradorPlaylists-android.apk`
+
+A página Web consulta a Release mais recente no GitHub e atualiza automaticamente os botões de download.
 
 ## Windows
 
-1. Baixe `MigradorPlaylists-windows.zip`.
+1. Baixe `MigradorPlaylists-windows.zip` na Release mais recente.
 2. Extraia o ZIP.
 3. Abra `MigradorPlaylists.exe`.
-4. Se o Windows SmartScreen aparecer, use **Mais informações → Executar assim mesmo**.
 
 ## Android
 
-1. Baixe o artifact **MigradorPlaylists-android** no workflow **Build Android (APK)**.
-2. Extraia `flet-apk.zip` e pegue o `.apk`.
-3. Permita a instalação de apps desconhecidos no Android e instale o APK.
+1. Baixe `MigradorPlaylists-android.apk` na Release mais recente.
+2. Permita a instalação do APK no Android.
+3. Abra o aplicativo e conecte suas contas.
 
-Para manter a mesma assinatura em atualizações futuras, siga `celular/README.md` e configure os segredos de assinatura.
+Para manter a mesma assinatura nas atualizações, veja `celular/README.md`.
+
+## Web
+
+O site contém:
+
+- landing page profissional;
+- downloads automáticos da Release mais recente;
+- Política de Privacidade e Termos de Serviço;
+- OAuth de Spotify e Google/YouTube;
+- migração Spotify → YouTube e YouTube → Spotify;
+- correspondência automática com revisão manual para resultados incertos;
+- sessões protegidas em cookies HttpOnly criptografados.
+
+A versão Web usa as APIs oficiais para operações autenticadas. Veja **[WEB_DEPLOY.md](WEB_DEPLOY.md)** para publicar no Netlify e configurar OAuth com segurança.
 
 ## Como usar
 
-1. Vincule o Spotify usando seu próprio Client ID.
-2. Vincule o YouTube Music seguindo as instruções do app.
-3. Escolha **Spotify ➔ YouTube Music** ou **YouTube Music ➔ Spotify**.
-4. Cole o link da playlist, escolha o nome da playlist de destino e inicie a migração.
+1. Conecte Spotify e Google/YouTube.
+2. Escolha **Spotify ➔ YouTube Music** ou **YouTube Music ➔ Spotify**.
+3. Cole o link/ID da playlist.
+4. Escolha o nome da playlist de destino.
+5. Inicie a migração e revise eventuais correspondências incertas.
 
 ## Estrutura
 
 - `app.py` — interface desktop.
-- `nucleo.py` — lógica compartilhada entre desktop e mobile.
-- `celular/` — projeto Flet do Android.
+- `nucleo.py` — lógica compartilhada dos apps nativos.
+- `celular/` — versão Android em Flet.
+- `site/` — site público e interface da migração Web.
+- `netlify/functions/api.js` — OAuth e integração serverless da versão Web.
+- `netlify.toml` — configuração de deploy, rotas e headers de segurança.
+- `WEB_DEPLOY.md` — guia de configuração do site e OAuth.
 - `.github/workflows/build.yml` — build automático do Windows.
 - `.github/workflows/build-android.yml` — build automático do APK.
-- `ferramentas/gerar_chave_android.py` — gera uma chave de assinatura persistente.
 
 ## Rodar pelo código-fonte no PC
 
@@ -53,6 +76,10 @@ python app.py
 
 ## Privacidade
 
-Tokens, sessões e progresso ficam no dispositivo do usuário. O projeto não usa servidor próprio para receber credenciais. O acesso ao YouTube Music usa a biblioteca não oficial `ytmusicapi`.
+Nos aplicativos nativos, tokens, configurações e progresso ficam no dispositivo do usuário. Na versão Web, tokens OAuth são armazenados em cookies HttpOnly criptografados e não são expostos ao JavaScript da página. A versão Web não exige banco de dados para armazenar contas ou histórico de usuários.
 
-Licença: MIT.
+Leia também `site/privacidade.html`.
+
+## Licença
+
+MIT.
