@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Migrador de Playlists: Spotify -> YouTube Music
+RHYFT: Spotify -> YouTube Music
 
 Cada pessoa usa as PRÓPRIAS contas:
   - Spotify: cria o próprio app no painel de desenvolvedores (grátis) e cola só o
@@ -8,7 +8,7 @@ Cada pessoa usa as PRÓPRIAS contas:
   - YouTube Music: cola os cabeçalhos da requisição copiados do navegador. O app
     limpa, valida (faz uma chamada de teste) e só então salva.
 
-Nada de credenciais é embutido no código. Tudo fica em %APPDATA%\MigradorPlaylists.
+Nada de credenciais é embutido no código. Tudo fica em %APPDATA%\RHYFT.
 """
 import base64
 import glob
@@ -475,7 +475,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         super().__init__()
         definir_fontes(self)
 
-        self.title(f'Migrador de Playlists (v{APP_VERSION})')
+        self.title(f'RHYFT (v{APP_VERSION})')
         self.geometry('920x790')
         self.minsize(860, 720)
         self.configure(fg_color=COR_FUNDO)
@@ -492,7 +492,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         cab.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(cab, text='', image=imagem_logo(46), width=46, height=46).grid(
             row=0, column=0, rowspan=2, padx=(0, 14))
-        ctk.CTkLabel(cab, text='Migrador de Playlists', font=fonte(22, 'bold'),
+        ctk.CTkLabel(cab, text='RHYFT', font=fonte(22, 'bold'),
                      text_color=COR_TEXTO, anchor='w').grid(row=0, column=1, sticky='sw')
         ctk.CTkLabel(cab, text='Passe suas playlists entre o Spotify e o YouTube Music',
                      font=fonte(12), text_color=COR_TEXTO_2, anchor='w').grid(row=1, column=1, sticky='nw')

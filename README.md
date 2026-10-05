@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🎵 Migrador de Playlists
+# RHYFT
+
+**Your music. No borders.**
 
 ### Spotify ⇄ YouTube Music
 
@@ -20,7 +22,7 @@ Migre suas playlists entre **Spotify** e **YouTube Music** de forma simples, rá
 
 ## ✨ O projeto
 
-O **Migrador de Playlists** permite transferir playlists nos dois sentidos:
+O **RHYFT** permite transferir playlists nos dois sentidos:
 
 - **Spotify → YouTube Music**
 - **YouTube Music → Spotify**
@@ -52,7 +54,7 @@ No site você encontra a versão Web, downloads atualizados, Política de Privac
 
 | Plataforma | Como usar |
 |---|---|
-| 🌐 **Web** | [Abrir o Migrador Online](https://migrador-playlists.netlify.app/migrar.html) |
+| 🌐 **Web** | [Abrir o RHYFT Online](https://migrador-playlists.netlify.app/migrar.html) |
 | 🪟 **Windows** | [Baixar a versão mais recente](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest) |
 | 🤖 **Android** | [Baixar o APK mais recente](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest) |
 
@@ -73,7 +75,7 @@ Os builds de Windows e Android são gerados automaticamente pelo **GitHub Action
 
 ## 🔐 Privacidade
 
-O projeto usa OAuth para autenticação — sua senha do Spotify ou Google não é entregue ao Migrador.
+O projeto usa OAuth para autenticação — sua senha do Spotify ou Google não é entregue ao RHYFT.
 
 Nos aplicativos nativos, tokens, configurações e progresso ficam no dispositivo. Na versão Web, as sessões são protegidas em cookies **HttpOnly** criptografados e os tokens não ficam expostos ao JavaScript da página.
 
@@ -99,7 +101,7 @@ Nos aplicativos nativos, tokens, configurações e progresso ficam no dispositiv
 app.py                     # Interface desktop
 nucleo.py                  # Lógica compartilhada dos apps nativos
 celular/                    # Aplicativo Android em Flet
-site/                       # Site oficial e Migrador Web
+site/                       # Site oficial e RHYFT Web
 netlify/functions/api.js    # OAuth e integrações da versão Web
 netlify.toml                # Configuração do deploy no Netlify
 .github/workflows/          # Builds automáticos

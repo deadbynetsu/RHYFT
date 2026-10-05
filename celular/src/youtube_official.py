@@ -25,7 +25,7 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 class HybridYTMusic:
-    """Subset compatível com o YTMusic usado pelo núcleo do Migrador."""
+    """Subset compatível com o YTMusic usado pelo núcleo do RHYFT."""
 
     PUBLIC_CLASS = None  # preenchido pelo entrypoint antes do app iniciar
 

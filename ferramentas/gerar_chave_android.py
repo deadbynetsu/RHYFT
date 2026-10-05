@@ -36,7 +36,7 @@ def main():
     senha = gerar_senha()
     chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     nome = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, 'Migrador de Playlists'),
+        x509.NameAttribute(NameOID.COMMON_NAME, 'RHYFT'),
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, 'deadbynetsu'),
     ])
     agora = datetime.datetime.now(datetime.timezone.utc)

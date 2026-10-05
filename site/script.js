@@ -40,8 +40,8 @@
       if (!response.ok) throw new Error(`GitHub ${response.status}`);
       const release = await response.json();
       const assets = release.assets || [];
-      const windows = assets.find(a => /windows.*\.zip$/i.test(a.name)) || assets.find(a => /\.zip$/i.test(a.name) && /migrador/i.test(a.name));
-      const android = assets.find(a => /android.*\.apk$/i.test(a.name)) || assets.find(a => /\.apk$/i.test(a.name));
+      const windows = assets.find(a => /^RHYFT-windows\.zip$/i.test(a.name)) || assets.find(a => /windows.*\.zip$/i.test(a.name)) || assets.find(a => /\.zip$/i.test(a.name) && /(rhyft|migrador)/i.test(a.name));
+      const android = assets.find(a => /^RHYFT-android\.apk$/i.test(a.name)) || assets.find(a => /android.*\.apk$/i.test(a.name)) || assets.find(a => /\.apk$/i.test(a.name));
       const version = release.tag_name || 'Release mais recente';
       const date = release.published_at ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(new Date(release.published_at)) : 'GitHub Releases';
       $$('.release-version').forEach(el => el.textContent = version);

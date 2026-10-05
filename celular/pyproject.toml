@@ -1,7 +1,7 @@
 [project]
 name = "migrador-playlists"
 version = "1.4.0"
-description = "Migrador de Playlists: Spotify e YouTube Music nos dois sentidos."
+description = "RHYFT: Spotify e YouTube Music nos dois sentidos."
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "flet==1.0.3",
@@ -17,7 +17,7 @@ dev = [
 
 [tool.flet]
 org = "dev.deadbynetsu"
-product = "Migrador de Playlists"
+product = "RHYFT"
 company = "deadbynetsu"
 copyright = "Feito por deadbynetsu"
 icon_background = "#080A0F"

@@ -1,4 +1,4 @@
-# Migrador de Playlists: versão de celular (Android)
+# RHYFT: versão de celular (Android)
 
 Mesma ideia do app do computador, em Flet. A lógica fica em `nucleo.py`, o mesmo arquivo usado pela versão de PC. O workflow copia o `nucleo.py` da raiz para `celular/src/` antes de compilar.
 
@@ -6,7 +6,7 @@ Mesma ideia do app do computador, em Flet. A lógica fica em `nucleo.py`, o mesm
 
 O workflow **Build Android (APK)** roda automaticamente quando há push na `main`, quando uma tag `v*` é publicada ou manualmente pela aba **Actions**.
 
-No fim da execução, baixe o artifact **MigradorPlaylists-android** e extraia `flet-apk.zip` para encontrar o `.apk`.
+No fim da execução, baixe o artifact **RHYFT-android** e extraia `flet-apk.zip` para encontrar o `.apk`.
 
 ## Assinatura do APK
 

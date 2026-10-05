@@ -39,12 +39,12 @@ conteudo = f"""VSVersionInfo(
           u'041604B0',
           [
             StringStruct(u'CompanyName', u'deadbynetsu'),
-            StringStruct(u'FileDescription', u'Migrador de Playlists - Spotify e YouTube Music'),
+            StringStruct(u'FileDescription', u'RHYFT - Spotify e YouTube Music'),
             StringStruct(u'FileVersion', u'{versao}'),
-            StringStruct(u'InternalName', u'MigradorPlaylists'),
+            StringStruct(u'InternalName', u'RHYFT'),
             StringStruct(u'LegalCopyright', u'Copyright (c) deadbynetsu'),
-            StringStruct(u'OriginalFilename', u'MigradorPlaylists.exe'),
-            StringStruct(u'ProductName', u'Migrador de Playlists'),
+            StringStruct(u'OriginalFilename', u'RHYFT.exe'),
+            StringStruct(u'ProductName', u'RHYFT'),
             StringStruct(u'ProductVersion', u'{versao}')
           ]
         )

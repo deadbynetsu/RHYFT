@@ -52,7 +52,7 @@ O site usa Authorization Code + PKCE.
 
 Em **Development Mode**, o Spotify permite somente um pequeno grupo de usuários autorizados no app. Portanto, mesmo com o site público, contas fora da allowlist podem conseguir fazer login e depois receber `403` ao chamar a Web API.
 
-Para remover essa allowlist, o aplicativo do Spotify precisa estar em **Extended Quota Mode**. As regras atuais do Spotify para solicitar esse modo são bastante restritivas e voltadas a organizações/serviços já estabelecidos. Isso é uma limitação da plataforma Spotify, não do código do Migrador.
+Para remover essa allowlist, o aplicativo do Spotify precisa estar em **Extended Quota Mode**. As regras atuais do Spotify para solicitar esse modo são bastante restritivas e voltadas a organizações/serviços já estabelecidos. Isso é uma limitação da plataforma Spotify, não do código do RHYFT.
 
 Enquanto o app Spotify estiver em Development Mode, use a versão Web como beta/teste e mantenha as versões nativas como alternativa para o público.
 

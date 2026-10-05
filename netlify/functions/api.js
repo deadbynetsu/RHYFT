@@ -354,7 +354,7 @@ async function spotifySearchRoute(event) {
 async function spotifyCreateRoute(event) {
   assertSameOrigin(event); const auth = await spotifyAuth(event); const body = readBody(event); const name = String(body.name || '').trim().slice(0, 100);
   if (!name) throw new HttpError(400, 'Nome da playlist vazio.', 'BAD_NAME');
-  const data = await providerFetch(`${SPOTIFY_API}/me/playlists`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ name, public: false, description: 'Criada pelo Migrador de Playlists' }) }, 'spotify');
+  const data = await providerFetch(`${SPOTIFY_API}/me/playlists`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ name, public: false, description: 'Criada pelo RHYFT' }) }, 'spotify');
   return json(201, { id: data.id, name: data.name || name, url: data.external_urls?.spotify || `https://open.spotify.com/playlist/${data.id}` }, auth.setCookies);
 }
 
@@ -416,7 +416,7 @@ async function youtubeSearchRoute(event) {
 async function youtubeCreateRoute(event) {
   assertSameOrigin(event); const auth = await googleAuth(event); const body = readBody(event); const name = String(body.name || '').trim().slice(0, 150);
   if (!name) throw new HttpError(400, 'Nome da playlist vazio.', 'BAD_NAME');
-  const data = await providerFetch(`${YOUTUBE_API}/playlists?part=snippet,status`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ snippet: { title: name, description: 'Criada pelo Migrador de Playlists' }, status: { privacyStatus: 'private' } }) }, 'google');
+  const data = await providerFetch(`${YOUTUBE_API}/playlists?part=snippet,status`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ snippet: { title: name, description: 'Criada pelo RHYFT' }, status: { privacyStatus: 'private' } }) }, 'google');
   return json(201, { id: data.id, name: data.snippet?.title || name, url: `https://www.youtube.com/playlist?list=${data.id}` }, auth.setCookies);
 }
 

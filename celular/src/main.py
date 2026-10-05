@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Migrador de Playlists (celular): Spotify <-> YouTube Music.
+RHYFT (celular): Spotify <-> YouTube Music.
 
 Interface em Flet 1.x. TODA a lógica (login, validação, lotes conferidos, retomada) vive em
 nucleo.py, o mesmo arquivo usado pelo app do computador.
@@ -13,13 +13,21 @@ import glob
 import os
 import queue
 import re
+import shutil
 import threading
 
 import flet as ft
 
 # Pasta privada do app. Precisa ser definida ANTES de importar o núcleo.
-os.environ.setdefault('MIGRADOR_DATA_DIR', os.path.join(
-    os.environ.get('FLET_APP_STORAGE_DATA') or os.path.expanduser('~'), 'MigradorPlaylists'))
+_storage_base = os.environ.get('FLET_APP_STORAGE_DATA') or os.path.expanduser('~')
+_data_nova = os.path.join(_storage_base, 'RHYFT')
+_data_antiga = os.path.join(_storage_base, 'MigradorPlaylists')
+if not os.path.exists(_data_nova) and os.path.isdir(_data_antiga):
+    try:
+        shutil.copytree(_data_antiga, _data_nova)
+    except OSError:
+        pass
+os.environ.setdefault('MIGRADOR_DATA_DIR', _data_nova)
 import nucleo as nuc  # noqa: E402
 
 FUNDO, CARTAO, BORDA = '#0D0E16', '#151726', '#2A2E48'
@@ -138,7 +146,7 @@ class Tela:
     # ---------------------------------------------------------------- tela
     def montar(self):
         p = self.page
-        p.title = 'Migrador de Playlists'
+        p.title = 'RHYFT'
         p.theme_mode = ft.ThemeMode.DARK
         p.bgcolor = FUNDO
         p.padding = 0
@@ -167,7 +175,7 @@ class Tela:
         self.lista_log = ft.ListView(controls=[], spacing=2, auto_scroll=True, expand=True)
 
         conteudo = ft.Column(spacing=12, scroll=ft.ScrollMode.AUTO, controls=[
-            ft.Row([ft.Text('Migrador de Playlists', size=22, weight=ft.FontWeight.BOLD),
+            ft.Row([ft.Text('RHYFT', size=22, weight=ft.FontWeight.BOLD),
                     ft.Text(f'v{nuc.APP_VERSION}', size=12, color=TEXTO2)],
                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             ft.Text('Passe suas playlists entre o Spotify e o YouTube Music', size=12, color=TEXTO2),
@@ -493,7 +501,7 @@ class Tela:
         def fechar(e):
             self.page.pop_dialog()
 
-        passos = ('No computador: abra o Migrador (v1.4 ou mais nova) > Vincular o YouTube Music > '
+        passos = ('No computador: abra o RHYFT (v1.4 ou mais nova) > Vincular o YouTube Music > '
                   '"Copiar para o celular". Envie o texto para você mesmo (ex.: Mensagens salvas) e cole aqui. '
                   'Ele contém seu login do Google: trate como senha e apague a mensagem depois.')
         self.page.show_dialog(ft.AlertDialog(

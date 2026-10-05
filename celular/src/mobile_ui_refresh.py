@@ -195,7 +195,7 @@ def apply_mobile_ui(target):
                         logo,
                         ft.Column(
                             controls=[
-                                ft.Text('Migrador de Playlists', size=20, weight=ft.FontWeight.BOLD, color=TEXT),
+                                ft.Text('RHYFT', size=20, weight=ft.FontWeight.BOLD, color=TEXT),
                                 ft.Text('Spotify  ⇄  YouTube Music', size=11, color=MUTED),
                             ],
                             spacing=1,

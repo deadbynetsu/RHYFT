@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Núcleo do Migrador de Playlists (SEM interface): usado pelo app do computador (app.py)
+Núcleo do RHYFT (SEM interface): usado pelo app do computador (app.py)
 e pelo app de celular (src/main.py).
 
 Contém: caminhos/configuração, login do Spotify (PKCE), cabeçalhos do YouTube Music,
@@ -36,7 +36,8 @@ from spotipy.exceptions import SpotifyException
 from ytmusicapi import YTMusic
 
 # ============================== CAMINHOS & CONFIGURAÇÕES ======================
-APP_NAME = 'MigradorPlaylists'
+APP_NAME = 'RHYFT'
+LEGACY_APP_NAME = 'MigradorPlaylists'
 APP_VERSION = '1.4.0'
 TAMANHO_LOTE = 10          # quantas músicas por envio ao YouTube Music (cada lote é conferido depois)
 TOLERANCIA_DURACAO = 15    # segundos de diferença aceitos entre Spotify e YouTube
@@ -59,6 +60,12 @@ def obter_pasta_dados():
     else:
         base = os.environ.get('APPDATA') or os.path.join(os.path.expanduser('~'), '.config')
         pasta = os.path.join(base, APP_NAME)
+        antiga = os.path.join(base, LEGACY_APP_NAME)
+        if not os.path.exists(pasta) and os.path.isdir(antiga):
+            try:
+                shutil.copytree(antiga, pasta)
+            except OSError:
+                pass
     try:
         os.makedirs(pasta, exist_ok=True)
         return pasta
@@ -95,13 +102,13 @@ SPOTIFY_AUTH_URL = 'https://accounts.spotify.com/authorize'
 SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token'
 
 PAGINA_OK = (
-    '<html><head><meta charset="utf-8"><title>Migrador de Playlists</title></head>'
+    '<html><head><meta charset="utf-8"><title>RHYFT</title></head>'
     '<body style="font-family:Segoe UI,Arial,sans-serif;text-align:center;margin-top:15%">'
     '<h2>\u2705 Spotify vinculado!</h2>'
     '<p>Pode fechar esta aba e voltar ao aplicativo.</p></body></html>'
 )
 PAGINA_ERRO = (
-    '<html><head><meta charset="utf-8"><title>Migrador de Playlists</title></head>'
+    '<html><head><meta charset="utf-8"><title>RHYFT</title></head>'
     '<body style="font-family:Segoe UI,Arial,sans-serif;text-align:center;margin-top:15%">'
     '<h2>\u274c A autorização não foi concluída</h2>'
     '<p>Volte ao aplicativo e tente novamente.</p></body></html>'
@@ -690,7 +697,7 @@ def buscar_ultima_versao(repo, timeout=(6, 12)):
     try:
         resp = requests.get(
             f'https://api.github.com/repos/{repo}/releases', params={'per_page': 30}, timeout=timeout,
-            headers={'User-Agent': 'MigradorPlaylistsApp', 'Accept': 'application/vnd.github+json'})
+            headers={'User-Agent': 'RHYFTApp', 'Accept': 'application/vnd.github+json'})
     except requests.exceptions.RequestException as e:
         raise RuntimeError('Não consegui falar com o GitHub (sem internet ou o servidor não respondeu).') from e
     if resp.status_code == 404:
@@ -937,7 +944,7 @@ class MotorMigracao:
 
             if not yt_playlist_id:
                 self.log(f"🚀 Criando a playlist '{nome_playlist_destino}' no YouTube Music...", 'info')
-                yt_playlist_id = yt.create_playlist(title=nome_playlist_destino, description='Importada via Migrador de Playlists')
+                yt_playlist_id = yt.create_playlist(title=nome_playlist_destino, description='Importada via RHYFT')
                 if not isinstance(yt_playlist_id, str):
                     raise RuntimeError(f'O YouTube Music recusou criar a playlist: {yt_playlist_id}')
                 estado['playlist_id'] = yt_playlist_id
@@ -1353,7 +1360,7 @@ class MotorMigracao:
                 try:
                     criada = sp._post('me/playlists', payload={
                         'name': nome_playlist_destino, 'public': False,
-                        'description': 'Importada via Migrador de Playlists'})
+                        'description': 'Importada via RHYFT'})
                 except SpotifyException as e:
                     raise RuntimeError(explicar_erro_spotify(e))
                 sp_playlist_id = (criada or {}).get('id')
