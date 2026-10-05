@@ -27,6 +27,34 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Preparar identidade visual do Android
+        run: |
+          python -m pip install --quiet cairosvg
+          python - <<'PY'
+          from pathlib import Path
+          from cairosvg import svg2png
+
+          assets = Path('celular/src/assets')
+          assets.mkdir(parents=True, exist_ok=True)
+          origem = assets / 'brand.svg'
+          if not origem.exists():
+              raise SystemExit('Logo celular/src/assets/brand.svg não encontrada.')
+
+          svg2png(
+              url=str(origem),
+              write_to=str(assets / 'icon.png'),
+              output_width=1024,
+              output_height=1024,
+          )
+          svg2png(
+              url=str(origem),
+              write_to=str(assets / 'splash.png'),
+              output_width=1024,
+              output_height=1024,
+          )
+          print('Logo, ícone e splash Android preparados.')
+          PY
+
       - name: Configurar assinatura fixa (se houver segredos)
         if: env.KEYSTORE_B64 != ''
         run: |
