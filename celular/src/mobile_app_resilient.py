@@ -6,7 +6,8 @@ No Android:
 - evita crash se o bundle não trouxer traduções do ytmusicapi;
 - usa ytmusicapi sem login apenas para busca pública;
 - usa YouTube Data API v3 oficial para operações autenticadas;
-- aplica uma interface mobile mais compacta e organizada.
+- aplica uma interface mobile mais compacta e organizada;
+- aplica a identidade visual oficial do app.
 
 A camada HybridYTMusic contorna o bug aberto do ytmusicapi em que chamadas
 OAuth ao /youtubei podem retornar HTTP 400 "Request contains an invalid
@@ -94,16 +95,17 @@ from youtube_official import HybridYTMusic  # noqa: E402
 HybridYTMusic.PUBLIC_CLASS = ytmusicapi.YTMusic
 ytmusicapi.YTMusic = HybridYTMusic
 
-# O mobile_app também intercepta ft.run para instalar o OAuth. Colocamos nossa
-# camada ANTES dele: assim mobile_app aplica os patches funcionais primeiro e,
-# imediatamente antes do Flet iniciar de verdade, esta camada reorganiza só a UI.
+# O mobile_app também intercepta ft.run para instalar o OAuth. Colocamos nossas
+# camadas ANTES dele: primeiro reorganizamos a UI e depois aplicamos a identidade.
 from mobile_ui_refresh import apply_mobile_ui  # noqa: E402
+from mobile_branding import apply_mobile_branding  # noqa: E402
 
 _REAL_UI_RUN = ft.run
 
 
 def _run_com_ui(target, *args, **kwargs):
     apply_mobile_ui(target)
+    apply_mobile_branding(target)
     return _REAL_UI_RUN(target, *args, **kwargs)
 
 
