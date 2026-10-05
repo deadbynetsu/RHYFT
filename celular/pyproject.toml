@@ -23,4 +23,8 @@ copyright = "Feito por deadbynetsu"
 
 [tool.flet.app]
 path = "src"
-module = "mobile_app.py"
+module = "mobile_app_resilient.py"
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.ACCESS_NETWORK_STATE" = true
