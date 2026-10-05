@@ -1,0 +1,166 @@
+name: Rebrand project to RHYFT
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".rhyft-rebrand-trigger"
+
+permissions:
+  contents: write
+
+jobs:
+  rebrand:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Aplicar rebranding completo
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          text_exts = {'.py', '.md', '.html', '.js', '.toml', '.yml', '.yaml', '.bat', '.txt'}
+          skip = {'.git'}
+
+          # Primeiro, troca o nome visível e os nomes antigos de artefatos/binários.
+          for path in Path('.').rglob('*'):
+              if not path.is_file() or path.suffix.lower() not in text_exts:
+                  continue
+              if any(part in skip for part in path.parts):
+                  continue
+              text = path.read_text(encoding='utf-8')
+              original = text
+              text = text.replace('Migrador de Playlists', 'RHYFT')
+              text = text.replace('MigradorPlaylists', 'RHYFT')
+              text = text.replace('Migrador Spotify e YouTube Music', 'RHYFT — Spotify e YouTube Music')
+              text = text.replace('migrador de playlists', 'RHYFT')
+              if text != original:
+                  path.write_text(text, encoding='utf-8')
+
+          # Mantém identificadores externos/infra estáveis para não quebrar atualizações,
+          # OAuth, Search Console, links existentes e o endereço atual do site.
+          pyproject = Path('celular/pyproject.toml')
+          text = pyproject.read_text(encoding='utf-8')
+          text = text.replace('name = "rhyft"', 'name = "migrador-playlists"')
+          pyproject.write_text(text, encoding='utf-8')
+
+          # Migra dados antigos no PC para %APPDATA%/RHYFT sem deslogar usuários existentes.
+          for nuc_path in (Path('nucleo.py'), Path('celular/src/nucleo.py')):
+              text = nuc_path.read_text(encoding='utf-8')
+              if "LEGACY_APP_NAME = 'MigradorPlaylists'" not in text:
+                  text = text.replace(
+                      "APP_NAME = 'RHYFT'\nAPP_VERSION =",
+                      "APP_NAME = 'RHYFT'\nLEGACY_APP_NAME = 'MigradorPlaylists'\nAPP_VERSION =",
+                      1,
+                  )
+              old = """    else:\n        base = os.environ.get('APPDATA') or os.path.join(os.path.expanduser('~'), '.config')\n        pasta = os.path.join(base, APP_NAME)\n    try:\n        os.makedirs(pasta, exist_ok=True)\n        return pasta\n"""
+              new = """    else:\n        base = os.environ.get('APPDATA') or os.path.join(os.path.expanduser('~'), '.config')\n        pasta = os.path.join(base, APP_NAME)\n        antiga = os.path.join(base, LEGACY_APP_NAME)\n        if not os.path.exists(pasta) and os.path.isdir(antiga):\n            try:\n                shutil.copytree(antiga, pasta)\n            except OSError:\n                pass\n    try:\n        os.makedirs(pasta, exist_ok=True)\n        return pasta\n"""
+              if old in text:
+                  text = text.replace(old, new, 1)
+              nuc_path.write_text(text, encoding='utf-8')
+
+          # Faz a mesma migração da pasta privada no Android.
+          main = Path('celular/src/main.py')
+          text = main.read_text(encoding='utf-8')
+          if 'import shutil\n' not in text:
+              text = text.replace('import re\nimport threading\n', 'import re\nimport shutil\nimport threading\n', 1)
+          old_mobile = """# Pasta privada do app. Precisa ser definida ANTES de importar o núcleo.\nos.environ.setdefault('MIGRADOR_DATA_DIR', os.path.join(\n    os.environ.get('FLET_APP_STORAGE_DATA') or os.path.expanduser('~'), 'RHYFT'))\n"""
+          new_mobile = """# Pasta privada do app. Precisa ser definida ANTES de importar o núcleo.\n_storage_base = os.environ.get('FLET_APP_STORAGE_DATA') or os.path.expanduser('~')\n_data_nova = os.path.join(_storage_base, 'RHYFT')\n_data_antiga = os.path.join(_storage_base, 'MigradorPlaylists')\nif not os.path.exists(_data_nova) and os.path.isdir(_data_antiga):\n    try:\n        shutil.copytree(_data_antiga, _data_nova)\n    except OSError:\n        pass\nos.environ.setdefault('MIGRADOR_DATA_DIR', _data_nova)\n"""
+          if old_mobile in text:
+              text = text.replace(old_mobile, new_mobile, 1)
+          main.write_text(text, encoding='utf-8')
+
+          # Site: prefere os novos nomes de assets, mas mantém fallback para releases antigas.
+          script = Path('site/script.js')
+          text = script.read_text(encoding='utf-8')
+          old_windows = "const windows = assets.find(a => /windows.*\\.zip$/i.test(a.name)) || assets.find(a => /\\.zip$/i.test(a.name) && /migrador/i.test(a.name));"
+          new_windows = "const windows = assets.find(a => /^RHYFT-windows\\.zip$/i.test(a.name)) || assets.find(a => /windows.*\\.zip$/i.test(a.name)) || assets.find(a => /\\.zip$/i.test(a.name) && /(rhyft|migrador)/i.test(a.name));"
+          old_android = "const android = assets.find(a => /android.*\\.apk$/i.test(a.name)) || assets.find(a => /\\.apk$/i.test(a.name));"
+          new_android = "const android = assets.find(a => /^RHYFT-android\\.apk$/i.test(a.name)) || assets.find(a => /android.*\\.apk$/i.test(a.name)) || assets.find(a => /\\.apk$/i.test(a.name));"
+          text = text.replace(old_windows, new_windows).replace(old_android, new_android)
+          script.write_text(text, encoding='utf-8')
+
+          # README: deixa a nova marca aparecer forte no topo sem trocar a URL estável do Netlify.
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace('# 🎵 RHYFT', '# RHYFT')
+          if 'Your music. No borders.' not in text:
+              text = text.replace('# RHYFT\n', '# RHYFT\n\n**Your music. No borders.**\n', 1)
+          readme.write_text(text, encoding='utf-8')
+
+          # Android: remove assets antigos da mesma release depois que o novo APK for publicado.
+          android = Path('.github/workflows/build-android.yml')
+          text = android.read_text(encoding='utf-8')
+          needle = '            echo "APK atualizado na Release $TAG."\n'
+          cleanup = """            gh release delete-asset "$TAG" MigradorPlaylists-android.apk --repo "$GITHUB_REPOSITORY" -y >/dev/null 2>&1 || true\n            gh release delete-asset "$TAG" MigradorPlaylists-android.apk.sha256 --repo "$GITHUB_REPOSITORY" -y >/dev/null 2>&1 || true\n            echo "APK RHYFT atualizado na Release $TAG."\n"""
+          if needle in text:
+              text = text.replace(needle, cleanup, 1)
+          android.write_text(text, encoding='utf-8')
+
+          # Windows: publica também em pushes da main e limpa os assets antigos da release atual.
+          win = Path('.github/workflows/build.yml')
+          text = win.read_text(encoding='utf-8')
+          marker = '\n      - name: Publicar no Release quando houver tag\n'
+          if marker in text:
+              text = text.split(marker, 1)[0] + r'''
+      - name: Publicar Windows na Release da versão
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (python -c "import nucleo; print(nucleo.APP_VERSION)").Trim()
+          $tag = "v$version"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
+            gh release delete-asset $tag MigradorPlaylists-windows.zip --repo $env:GITHUB_REPOSITORY -y 2>$null
+            gh release delete-asset $tag MigradorPlaylists-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
+            gh release delete-asset $tag MigradorPlaylists.exe.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
+            Write-Host "Windows RHYFT atualizado na Release $tag."
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
+            gh release create $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
+          } else {
+            Write-Warning "Release $tag ainda não existe; os arquivos ficaram nos Artifacts."
+          }
+'''
+          win.write_text(text, encoding='utf-8')
+
+          # Ajusta metadados do Windows que não usam exatamente o nome antigo completo.
+          version_info = Path('ferramentas/gerar_version_info_windows.py')
+          text = version_info.read_text(encoding='utf-8')
+          text = text.replace("u'Migrador Spotify e YouTube Music'", "u'RHYFT - Spotify e YouTube Music'")
+          version_info.write_text(text, encoding='utf-8')
+
+          # Verificação final: o nome antigo só pode sobrar em identificadores externos/legados permitidos.
+          allowed = {
+              '.github/workflows/rebrand-rhyft.yml',
+              'README.md',  # URL do site/repo atual pode conter o slug antigo
+              'WEB_DEPLOY.md',
+              'celular/pyproject.toml',
+              'celular/src/main.py',
+              'nucleo.py',
+              'celular/src/nucleo.py',
+              '.github/workflows/build-android.yml',
+              '.github/workflows/build.yml',
+              'site/script.js',
+          }
+          print('Rebranding preparado. Arquivos alterados:')
+          import subprocess
+          subprocess.run(['git', 'status', '--short'], check=False)
+          PY
+
+      - name: Commitar rebranding
+        run: |
+          git config user.name ".NeTsU"
+          git config user.email "felipezaaroblox@gmail.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nada para alterar."
+            exit 0
+          fi
+          git commit -m "Rebrand project to RHYFT"
+          git push origin HEAD:main
