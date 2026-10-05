@@ -20,10 +20,18 @@ org = "dev.deadbynetsu"
 product = "Migrador de Playlists"
 company = "deadbynetsu"
 copyright = "Feito por deadbynetsu"
+icon_background = "#080A0F"
 
 [tool.flet.app]
 path = "src"
 module = "mobile_app_resilient.py"
+
+[tool.flet.android]
+adaptive_icon_background = "#080A0F"
+
+[tool.flet.android.splash]
+color = "#080A0F"
+dark_color = "#080A0F"
 
 [tool.flet.android.permission]
 "android.permission.INTERNET" = true
