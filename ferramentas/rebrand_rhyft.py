@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 """Rebranding único do projeto para RHYFT.
 
-Este script troca a marca visível, nomes de binários/artefatos e mantém
-compatibilidade com dados locais, URLs públicas e identificadores externos.
+Troca a marca visível, nomes de binários/documentação e mantém compatibilidade
+com dados locais e identificadores externos já usados em produção.
 """
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parent.parent
-TEXT_EXTS = {'.py', '.md', '.html', '.js', '.toml', '.yml', '.yaml', '.bat', '.txt'}
+TEXT_EXTS = {'.py', '.md', '.html', '.js', '.toml', '.bat', '.txt'}
 SKIP = {
-    Path('.github/workflows/rebrand-rhyft.yml'),
     Path('ferramentas/rebrand_rhyft.py'),
 }
 
@@ -23,12 +22,12 @@ def write(rel, text):
     (ROOT / rel).write_text(text, encoding='utf-8')
 
 
-# Marca e artefatos/binários.
+# Marca visível e nomes de binários/artefatos fora dos workflows.
 for path in ROOT.rglob('*'):
     if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
         continue
     rel = path.relative_to(ROOT)
-    if '.git' in rel.parts or rel in SKIP:
+    if '.git' in rel.parts or rel in SKIP or '.github' in rel.parts:
         continue
     text = path.read_text(encoding='utf-8')
     original = text
@@ -81,7 +80,7 @@ if old_mobile in text:
     text = text.replace(old_mobile, new_mobile, 1)
 write('celular/src/main.py', text)
 
-# Site: novos assets primeiro; releases antigas continuam sendo fallback.
+# Site: prioriza os novos nomes de download, mas mantém fallback para releases antigas.
 text = read('site/script.js')
 old_windows = "const windows = assets.find(a => /windows.*\\.zip$/i.test(a.name)) || assets.find(a => /\\.zip$/i.test(a.name) && /migrador/i.test(a.name));"
 new_windows = "const windows = assets.find(a => /^RHYFT-windows\\.zip$/i.test(a.name)) || assets.find(a => /windows.*\\.zip$/i.test(a.name)) || assets.find(a => /\\.zip$/i.test(a.name) && /(rhyft|migrador)/i.test(a.name));"
@@ -96,40 +95,5 @@ text = text.replace('# 🎵 RHYFT', '# RHYFT')
 if 'Your music. No borders.' not in text:
     text = text.replace('# RHYFT\n', '# RHYFT\n\n**Your music. No borders.**\n', 1)
 write('README.md', text)
-
-# Android: remove assets com o nome antigo depois que o RHYFT for publicado.
-text = read('.github/workflows/build-android.yml')
-needle = '            echo "APK atualizado na Release $TAG."\n'
-cleanup = """            gh release delete-asset \"$TAG\" MigradorPlaylists-android.apk --repo \"$GITHUB_REPOSITORY\" -y >/dev/null 2>&1 || true\n            gh release delete-asset \"$TAG\" MigradorPlaylists-android.apk.sha256 --repo \"$GITHUB_REPOSITORY\" -y >/dev/null 2>&1 || true\n            echo \"APK RHYFT atualizado na Release $TAG.\"\n"""
-if needle in text:
-    text = text.replace(needle, cleanup, 1)
-write('.github/workflows/build-android.yml', text)
-
-# Windows: publicar o build rebatizado também na release vAPP_VERSION em pushes.
-text = read('.github/workflows/build.yml')
-marker = '\n      - name: Publicar no Release quando houver tag\n'
-if marker in text:
-    text = text.split(marker, 1)[0] + r'''
-      - name: Publicar Windows na Release da versão
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $version = (python -c "import nucleo; print(nucleo.APP_VERSION)").Trim()
-          $tag = "v$version"
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
-            gh release delete-asset $tag MigradorPlaylists-windows.zip --repo $env:GITHUB_REPOSITORY -y 2>$null
-            gh release delete-asset $tag MigradorPlaylists-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
-            gh release delete-asset $tag MigradorPlaylists.exe.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
-            Write-Host "Windows RHYFT atualizado na Release $tag."
-          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
-            gh release create $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
-          } else {
-            Write-Warning "Release $tag ainda não existe; os arquivos ficaram nos Artifacts."
-          }
-'''
-write('.github/workflows/build.yml', text)
 
 print('Rebranding RHYFT aplicado.')
