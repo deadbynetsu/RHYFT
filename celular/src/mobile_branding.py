@@ -54,15 +54,14 @@ def _trocar_logo(raiz):
         visitados.add(id(atual))
 
         if _eh_logo_provisoria(atual):
-            # Mantemos o container de 44x44 e trocamos só o desenho interno.
-            # Assim o alinhamento do cabeçalho permanece exatamente igual.
+            # icon.png é gerado pelo workflow antes do build e entra no bundle
+            # como asset. Usamos PNG aqui para não depender do renderer SVG do
+            # cliente Android. Flet 1.x usa BoxFit, não ImageFit.
             atual.content = ft.Image(
-                src='brand.svg',
-                width=36,
-                height=36,
-                fit=ft.ImageFit.CONTAIN,
-                anti_alias=True,
-                semantics_label='Logo do Migrador de Playlists',
+                src='icon.png',
+                width=38,
+                height=38,
+                fit=ft.BoxFit.CONTAIN,
             )
             atual.alignment = ft.Alignment.CENTER
             return True
@@ -83,16 +82,11 @@ def apply_mobile_branding(target):
 
     def montar_com_logo(self):
         montar_base(self)
-        try:
-            # Procura recursivamente em toda a página. A versão antiga dependia
-            # de uma cadeia fixa de .content/.controls e falhava silenciosamente
-            # quando outro wrapper adicionava um nível à árvore.
-            for raiz in list(getattr(self.page, 'controls', []) or []):
-                if _trocar_logo(raiz):
-                    break
-        except Exception:
-            # Branding nunca deve impedir o app de iniciar.
-            pass
+        # Não escondemos mais erro de compatibilidade do controle de imagem:
+        # essa troca é simples e usa apenas propriedades suportadas no Flet 1.x.
+        for raiz in list(getattr(self.page, 'controls', []) or []):
+            if _trocar_logo(raiz):
+                break
 
     Tela.montar = montar_com_logo
     Tela._mobile_branding_applied = True
