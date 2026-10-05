@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Entrada Android com rede OAuth e YouTube autenticado mais resilientes.
+"""Entrada Android com rede OAuth, UI e YouTube autenticado mais resilientes.
 
 No Android:
 - trata falhas temporárias de DNS ao voltar do navegador;
 - evita crash se o bundle não trouxer traduções do ytmusicapi;
 - usa ytmusicapi sem login apenas para busca pública;
-- usa YouTube Data API v3 oficial para operações autenticadas.
+- usa YouTube Data API v3 oficial para operações autenticadas;
+- aplica uma interface mobile mais compacta e organizada.
 
-A última parte contorna o bug aberto do ytmusicapi em que chamadas OAuth ao
-/youtubei podem retornar HTTP 400 "Request contains an invalid argument".
+A camada HybridYTMusic contorna o bug aberto do ytmusicapi em que chamadas
+OAuth ao /youtubei podem retornar HTTP 400 "Request contains an invalid
+argument".
 """
 import gettext
 import time
 
+import flet as ft
 import requests
 
 _REAL_POST = requests.post
@@ -91,5 +94,20 @@ from youtube_official import HybridYTMusic  # noqa: E402
 HybridYTMusic.PUBLIC_CLASS = ytmusicapi.YTMusic
 ytmusicapi.YTMusic = HybridYTMusic
 
-# mobile_app aplica o patch de interface e inicia o Flet.
+# O mobile_app também intercepta ft.run para instalar o OAuth. Colocamos nossa
+# camada ANTES dele: assim mobile_app aplica os patches funcionais primeiro e,
+# imediatamente antes do Flet iniciar de verdade, esta camada reorganiza só a UI.
+from mobile_ui_refresh import apply_mobile_ui  # noqa: E402
+
+_REAL_UI_RUN = ft.run
+
+
+def _run_com_ui(target, *args, **kwargs):
+    apply_mobile_ui(target)
+    return _REAL_UI_RUN(target, *args, **kwargs)
+
+
+ft.run = _run_com_ui
+
+# mobile_app aplica o patch de OAuth e inicia o Flet.
 import mobile_app  # noqa: E402,F401
