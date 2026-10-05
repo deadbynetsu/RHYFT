@@ -104,9 +104,11 @@ def apply_mobile_ui(target):
         self.lbl_sp.weight = ft.FontWeight.W_500
         self.lbl_yt.weight = ft.FontWeight.W_500
 
-        self.sw_update.label = 'Atualizações automáticas'
+        # O texto fica fora do Switch no layout novo para não estourar em telas estreitas.
+        self.sw_update.label = ''
         self.sw_update.active_color = ACCENT
         self.btn_update.content = 'Verificar agora'
+        self.btn_update.expand = True
         _style_button(self.btn_update, bg=SURFACE_2, fg=ACCENT, padding=11)
 
         self.seg.show_selected_icon = False
@@ -137,6 +139,8 @@ def apply_mobile_ui(target):
             except Exception:
                 pass
 
+        # Expand só funciona no eixo principal do pai. O botão principal entra em
+        # uma Row dedicada para ocupar a largura sem crescer verticalmente.
         self.btn_iniciar.expand = True
         self.btn_pausar.expand = True
         self.btn_cancelar.expand = True
@@ -276,7 +280,7 @@ def apply_mobile_ui(target):
                     self.seg,
                     self.campo_origem,
                     self.campo_destino,
-                    self.btn_iniciar,
+                    ft.Row(controls=[self.btn_iniciar]),
                     ft.Row(
                         controls=[self.btn_pausar, self.btn_cancelar],
                         spacing=10,
@@ -354,8 +358,8 @@ def apply_mobile_ui(target):
                         controls=[
                             ft.Column(
                                 controls=[
-                                    ft.Text('Atualizações', size=13, weight=ft.FontWeight.BOLD, color=TEXT),
-                                    ft.Text('Pode verificar novas versões automaticamente.', size=10, color=MUTED),
+                                    ft.Text('Atualizações automáticas', size=13, weight=ft.FontWeight.BOLD, color=TEXT),
+                                    ft.Text('Busca uma versão nova quando o app abre.', size=10, color=MUTED),
                                 ],
                                 spacing=1,
                                 expand=True,
@@ -364,7 +368,7 @@ def apply_mobile_ui(target):
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    self.btn_update,
+                    ft.Row(controls=[self.btn_update]),
                 ],
                 spacing=10,
             ),
