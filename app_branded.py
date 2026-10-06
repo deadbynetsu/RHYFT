@@ -8,6 +8,10 @@ from PIL import Image
 
 import app as base
 
+# O núcleo ainda preserva alguns identificadores legados para compatibilidade de
+# dados locais. O build oficial, porém, sempre consulta Releases no repositório RHYFT.
+base.GITHUB_REPO = "deadbynetsu/RHYFT"
+
 APP_USER_MODEL_ID = "dev.deadbynetsu.RHYFT"
 
 
