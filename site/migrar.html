@@ -8,17 +8,49 @@
   <meta name="theme-color" content="#0B0C12">
   <link rel="icon" href="/brand.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/history.css">
   <script src="/migrar.js" defer></script>
+  <script src="/history.js" defer></script>
 </head>
 <body class="migrate-page">
   <div class="noise" aria-hidden="true"></div>
-  <header class="site-header compact"><nav class="nav shell"><a class="brand" href="/"><img src="/brand.svg" width="32" height="32" alt="" decoding="async"><span>RHYFT</span></a><div class="nav-links static"><a href="/">Início</a><a href="/privacidade.html">Privacidade</a><a href="https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator" target="_blank" rel="noreferrer">GitHub</a></div></nav></header>
+  <header class="site-header compact"><nav class="nav shell"><a class="brand" href="/"><img src="/brand.svg" width="32" height="32" alt="" decoding="async"><span>RHYFT</span></a><div class="nav-links static"><a href="/">Início</a><a href="/privacidade.html">Privacidade</a><a href="https://github.com/deadbynetsu/RHYFT" target="_blank" rel="noreferrer">GitHub</a></div></nav></header>
 
   <main class="migrate-shell shell">
     <section class="migrate-heading">
       <div class="eyebrow"><span class="status-dot"></span> MIGRAÇÃO ONLINE</div>
       <h1>Leve sua playlist sem instalar nada.</h1>
       <p>Conecte suas contas pelas páginas oficiais, escolha o sentido e acompanhe tudo por aqui.</p>
+    </section>
+
+    <div class="history-toolbar">
+      <button class="history-toggle" id="history-toggle" type="button" aria-expanded="false" aria-controls="history-panel">◴ Histórico <span class="history-toggle-count" id="history-count">0</span></button>
+      <span class="history-toolbar-note">Salvo somente neste navegador.</span>
+    </div>
+
+    <section class="history-panel" id="history-panel" hidden aria-label="Histórico de migrações">
+      <div class="history-head">
+        <div>
+          <small>HISTÓRICO LOCAL</small>
+          <h2>Suas migrações recentes</h2>
+          <p>Veja resultados anteriores, abra playlists prontas ou reutilize os dados de uma migração.</p>
+        </div>
+        <div class="history-head-actions">
+          <button class="btn btn-small btn-secondary" id="history-export" type="button">Exportar JSON</button>
+          <button class="btn btn-small btn-ghost" id="history-clear" type="button">Limpar histórico</button>
+        </div>
+      </div>
+      <div class="history-tools">
+        <input class="history-search" id="history-search" type="search" autocomplete="off" placeholder="Buscar por playlist ou link…">
+        <div class="history-filters" role="group" aria-label="Filtrar histórico">
+          <button class="history-filter active" type="button" data-filter="all">Todas</button>
+          <button class="history-filter" type="button" data-filter="completed">Concluídas</button>
+          <button class="history-filter" type="button" data-filter="attention">Com pendências</button>
+        </div>
+      </div>
+      <div class="history-list" id="history-list"></div>
+      <div class="history-empty" id="history-empty">Nenhuma migração salva neste navegador ainda.</div>
+      <div class="history-storage-note">O histórico guarda somente informações da migração, como nome, sentido, link da playlist e contagens. Tokens e senhas não são salvos aqui.</div>
     </section>
 
     <section class="account-grid" aria-label="Contas conectadas">
