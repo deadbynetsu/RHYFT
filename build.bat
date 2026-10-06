@@ -1,6 +1,6 @@
 @echo off
 REM Gera dist\RHYFT.exe (um arquivo so, sem janela de console) com branding oficial.
-python -m pip install -r requirements.txt pyinstaller "cairosvg>=2.7,<3"
+python -m pip install -r requirements.txt pyinstaller
 python ferramentas\gerar_branding_windows.py
 if errorlevel 1 exit /b %errorlevel%
 python ferramentas\gerar_version_info_windows.py
