@@ -10,6 +10,7 @@ on:
       - "nucleo.py"
       - "requirements.txt"
       - "build.bat"
+      - "ferramentas/gerar_version_info_windows.py"
       - ".github/workflows/build.yml"
 
 permissions:
@@ -31,54 +32,59 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt "nuitka>=2.7,<3" ordered-set zstandard
+          python -m pip install -r requirements.txt "pyinstaller>=6.10,<7"
 
-      - name: Compilar Windows com Nuitka/MSVC
+      - name: Gerar metadados do executável
+        shell: pwsh
+        run: python ferramentas/gerar_version_info_windows.py
+
+      - name: Compilar RHYFT em um único EXE
         shell: pwsh
         run: |
-          $version = (python -c "import nucleo; print(nucleo.APP_VERSION)").Trim()
-          if (-not $version) { throw "APP_VERSION não encontrado" }
-          $winVersion = "$version.0"
-
-          python -m nuitka `
-            --mode=standalone `
-            --msvc=latest `
-            --assume-yes-for-downloads `
-            --windows-console-mode=disable `
-            --output-dir=build-nuitka `
-            --output-filename=RHYFT.exe `
-            --windows-company-name=deadbynetsu `
-            --windows-product-name="RHYFT" `
-            --windows-file-description="RHYFT - Spotify e YouTube Music" `
-            --windows-file-version="$winVersion" `
-            --windows-product-version="$winVersion" `
-            --include-package-data=customtkinter `
+          python -m PyInstaller `
+            --clean `
+            --noconfirm `
+            --onefile `
+            --windowed `
+            --name RHYFT `
+            --version-file build_meta\version_info.txt `
+            --collect-all customtkinter `
+            --collect-all ytmusicapi `
+            --collect-all certifi `
             app.py
 
-          $compiled = Get-ChildItem build-nuitka -Directory -Filter "*.dist" | Select-Object -First 1
-          if (-not $compiled) { throw "Pasta .dist do Nuitka não encontrada" }
-
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          if (Test-Path "dist\RHYFT") { Remove-Item "dist\RHYFT" -Recurse -Force }
-          Move-Item $compiled.FullName "dist\RHYFT"
-
-          if (-not (Test-Path "dist\RHYFT\RHYFT.exe")) {
+          if (-not (Test-Path "dist\RHYFT.exe")) {
             throw "RHYFT.exe não foi gerado"
           }
+
+          $size = [math]::Round((Get-Item "dist\RHYFT.exe").Length / 1MB, 2)
+          Write-Host "RHYFT.exe gerado com $size MB."
+
+      - name: Testar inicialização do EXE
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath "dist\RHYFT.exe" -PassThru
+          Start-Sleep -Seconds 10
+          $proc.Refresh()
+          if ($proc.HasExited) {
+            throw "RHYFT.exe fechou sozinho durante o teste de inicialização. Exit code: $($proc.ExitCode)"
+          }
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Host "RHYFT.exe permaneceu aberto no smoke test."
 
       - name: Verificar build com Microsoft Defender
         shell: pwsh
         run: |
-          $dist = (Resolve-Path "dist\RHYFT").Path
+          $exe = (Resolve-Path "dist\RHYFT.exe").Path
           if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
             Write-Warning "Microsoft Defender não está disponível neste runner."
             exit 0
           }
 
-          Start-MpScan -ScanType CustomScan -ScanPath $dist -ErrorAction Stop
+          Start-MpScan -ScanType CustomScan -ScanPath $exe -ErrorAction Stop
           Start-Sleep -Seconds 2
           $detections = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
-            $_.Resources -and (($_.Resources -join "`n") -like "*$dist*")
+            $_.Resources -and (($_.Resources -join "`n") -like "*$exe*")
           }
 
           if ($detections) {
@@ -91,18 +97,21 @@ jobs:
       - name: Compactar e gerar checksums
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\RHYFT -DestinationPath RHYFT-windows.zip -CompressionLevel Optimal
-          (Get-FileHash RHYFT-windows.zip -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii RHYFT-windows.zip.sha256
-          (Get-FileHash dist\RHYFT\RHYFT.exe -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii RHYFT.exe.sha256
+          if (Test-Path "RHYFT-windows.zip") { Remove-Item "RHYFT-windows.zip" -Force }
+          Compress-Archive -Path "dist\RHYFT.exe" -DestinationPath "RHYFT-windows.zip" -CompressionLevel Optimal
+          Copy-Item "dist\RHYFT.exe" "RHYFT.exe" -Force
+          (Get-FileHash "RHYFT-windows.zip" -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii "RHYFT-windows.zip.sha256"
+          (Get-FileHash "RHYFT.exe" -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii "RHYFT.exe.sha256"
 
       - name: Upload Windows
         uses: actions/upload-artifact@v7
         with:
           name: RHYFT-windows
           path: |
+            RHYFT.exe
+            RHYFT.exe.sha256
             RHYFT-windows.zip
             RHYFT-windows.zip.sha256
-            RHYFT.exe.sha256
           if-no-files-found: error
 
       - name: Publicar Windows na Release da versão
@@ -114,13 +123,13 @@ jobs:
           $tag = "v$version"
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
+            gh release upload $tag RHYFT.exe RHYFT.exe.sha256 RHYFT-windows.zip RHYFT-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY --clobber
             gh release delete-asset $tag MigradorPlaylists-windows.zip --repo $env:GITHUB_REPOSITORY -y 2>$null
             gh release delete-asset $tag MigradorPlaylists-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
             gh release delete-asset $tag MigradorPlaylists.exe.sha256 --repo $env:GITHUB_REPOSITORY -y 2>$null
             Write-Host "Windows RHYFT atualizado na Release $tag."
           } elseif ($env:GITHUB_REF -like "refs/tags/*") {
-            gh release create $tag RHYFT-windows.zip RHYFT-windows.zip.sha256 RHYFT.exe.sha256 --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
+            gh release create $tag RHYFT.exe RHYFT.exe.sha256 RHYFT-windows.zip RHYFT-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
           } else {
             Write-Warning "Release $tag ainda não existe; os arquivos ficaram nos Artifacts."
           }
