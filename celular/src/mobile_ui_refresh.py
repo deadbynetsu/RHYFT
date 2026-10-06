@@ -5,6 +5,7 @@ Este módulo não altera a lógica de migração. Ele reaproveita os controles e
 callbacks criados por ``main.Tela`` e troca somente a composição visual depois
 do patch OAuth de ``mobile_app`` ter sido aplicado.
 """
+from rhyft_i18n import tr
 import flet as ft
 
 BG = '#080A0F'
@@ -115,7 +116,7 @@ def apply_mobile_ui(target):
         # O texto fica fora do Switch no layout novo para não estourar em telas estreitas.
         self.sw_update.label = ''
         self.sw_update.active_color = ACCENT
-        self.btn_update.content = 'Verificar agora'
+        self.btn_update.content = tr('Verificar agora')
         self.btn_update.expand = True
         _style_button(self.btn_update, bg=SURFACE_2, fg=ACCENT, padding=11)
 
@@ -206,7 +207,7 @@ def apply_mobile_ui(target):
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 ft.Text(
-                    'Leve suas playlists de uma plataforma para a outra sem complicação.',
+                    tr('Leve suas playlists de uma plataforma para a outra sem complicação.'),
                     size=12,
                     color=MUTED,
                 ),
@@ -216,11 +217,11 @@ def apply_mobile_ui(target):
 
         # Contas conectadas: substitui os dois cartões altos por linhas compactas.
         btn_sp = _style_button(
-            ft.Button(content='Gerenciar', on_click=self.abrir_spotify),
+            ft.Button(content=tr('Gerenciar'), on_click=self.abrir_spotify),
             bg=SURFACE_2, fg=TEXT, padding=10,
         )
         btn_yt = _style_button(
-            ft.Button(content='Gerenciar', on_click=self.abrir_yt),
+            ft.Button(content=tr('Gerenciar'), on_click=self.abrir_yt),
             bg=SURFACE_2, fg=TEXT, padding=10,
         )
 
@@ -249,7 +250,7 @@ def apply_mobile_ui(target):
 
         contas = ft.Column(
             controls=[
-                _section_label('CONTAS'),
+                _section_label(tr('CONTAS')),
                 conta(ft.Icons.MUSIC_NOTE, SPOTIFY, 'Spotify', self.lbl_sp, btn_sp),
                 conta(ft.Icons.PLAY_CIRCLE, YOUTUBE, 'YouTube Music', self.lbl_yt, btn_yt),
             ],
@@ -258,7 +259,7 @@ def apply_mobile_ui(target):
 
         # Área principal de migração.
         historico = ft.TextButton(
-            content='Histórico',
+            content=tr('Histórico'),
             icon=ft.Icons.HISTORY,
             on_click=self.abrir_historico,
         )
@@ -274,8 +275,8 @@ def apply_mobile_ui(target):
                         controls=[
                             ft.Column(
                                 controls=[
-                                    _section_label('NOVA MIGRAÇÃO'),
-                                    ft.Text('Escolha o sentido e cole sua playlist', size=14,
+                                    _section_label(tr('NOVA MIGRAÇÃO')),
+                                    ft.Text(tr('Escolha o sentido e cole sua playlist'), size=14,
                                             weight=ft.FontWeight.BOLD, color=TEXT),
                                 ],
                                 spacing=2,
@@ -335,7 +336,7 @@ def apply_mobile_ui(target):
                     ft.Row(
                         controls=[
                             ft.Icon(ft.Icons.TERMINAL, color=MUTED, size=17),
-                            ft.Text('Atividade', size=12, weight=ft.FontWeight.BOLD, color=TEXT),
+                            ft.Text(tr('Atividade'), size=12, weight=ft.FontWeight.BOLD, color=TEXT),
                         ],
                         spacing=7,
                     ),
@@ -380,9 +381,9 @@ def apply_mobile_ui(target):
         comunidade = _card(
             ft.Column(
                 controls=[
-                    _section_label('LINKS & COMUNIDADE'),
-                    ft.Text('Acompanhe o projeto', size=13, weight=ft.FontWeight.BOLD, color=TEXT),
-                    ft.Text('Os mesmos links da versão para PC, agora direto no app.', size=10, color=MUTED),
+                    _section_label(tr('LINKS & COMUNIDADE')),
+                    ft.Text(tr('Acompanhe o projeto'), size=13, weight=ft.FontWeight.BOLD, color=TEXT),
+                    ft.Text(tr('Os mesmos links da versão para PC, agora direto no app.'), size=10, color=MUTED),
                     ft.Row(controls=[sociais[0], sociais[1]], spacing=9),
                     ft.Row(controls=[sociais[2], sociais[3]], spacing=9),
                     ft.Row(controls=[sociais[4]]),
@@ -395,17 +396,22 @@ def apply_mobile_ui(target):
             border=BORDER_SOFT,
         )
 
+        async def change_language(event):
+            from mobile_language import open_language_settings
+            await open_language_settings(self.page, nuc.DATA_DIR)
+
         # Atualizações ficam no fim: acessíveis, mas sem ocupar o topo da experiência.
         atualizacoes = _card(
             ft.Column(
                 controls=[
-                    _section_label('APLICATIVO'),
+                    _section_label(tr('Configurações')),
+                    ft.TextButton(content=tr('Idioma'), on_click=change_language),
                     ft.Row(
                         controls=[
                             ft.Column(
                                 controls=[
-                                    ft.Text('Atualizações automáticas', size=13, weight=ft.FontWeight.BOLD, color=TEXT),
-                                    ft.Text('Busca uma versão nova quando o app abre.', size=10, color=MUTED),
+                                    ft.Text(tr('Atualizações automáticas'), size=13, weight=ft.FontWeight.BOLD, color=TEXT),
+                                    ft.Text(tr('Busca uma versão nova quando o app abre.'), size=10, color=MUTED),
                                 ],
                                 spacing=1,
                                 expand=True,
@@ -426,7 +432,7 @@ def apply_mobile_ui(target):
 
         rodape = ft.Column(
             controls=[
-                ft.Text('Feito por deadbynetsu', size=10, color=MUTED_2,
+                ft.Text(tr('Feito por deadbynetsu'), size=10, color=MUTED_2,
                         text_align=ft.TextAlign.CENTER),
                 ft.Text('Open source • Spotify ⇄ YouTube Music', size=9, color='#4F5869',
                         text_align=ft.TextAlign.CENTER),

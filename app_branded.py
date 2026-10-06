@@ -12,6 +12,8 @@ import app as base
 # dados locais. O build oficial, porém, sempre consulta Releases no repositório RHYFT.
 base.GITHUB_REPO = "deadbynetsu/RHYFT"
 
+_fallback_logo = base.imagem_logo
+
 APP_USER_MODEL_ID = "dev.deadbynetsu.RHYFT"
 
 
@@ -41,7 +43,7 @@ def imagem_logo_oficial(tam=44):
             img = img.crop(bbox)
         return ctk.CTkImage(light_image=img, dark_image=img, size=(tam, tam))
     except Exception:
-        return base.imagem_logo(tam)
+        return _fallback_logo(tam)
 
 
 def aplicar_icone_janela(janela):

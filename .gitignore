@@ -18,3 +18,5 @@ oauth.json
 .cache
 erros.log
 progresso_*.json
+.venv/
+.test-tmp/

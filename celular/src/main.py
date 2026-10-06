@@ -8,6 +8,7 @@ nucleo.py, o mesmo arquivo usado pelo app do computador.
 Regra do Flet 1.x: nada que bloqueie pode rodar na thread da tela. A migração roda numa thread
 própria e fala com a tela por uma fila (self.fila), esvaziada por uma tarefa da própria tela.
 """
+from rhyft_i18n import tr
 import asyncio
 import glob
 import os
@@ -141,7 +142,7 @@ class Tela:
             self.page.pop_dialog()
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=ft.Text(titulo), content=ft.Text(texto),
-            actions=[ft.TextButton(content='Não', on_click=nao), ft.Button(content='Sim', on_click=sim)]))
+            actions=[ft.TextButton(content=tr('Não'), on_click=nao), ft.Button(content=tr('Sim'), on_click=sim)]))
 
     # ---------------------------------------------------------------- tela
     def montar(self):
@@ -153,23 +154,23 @@ class Tela:
 
         self.lbl_sp = ft.Text('', size=12)
         self.lbl_yt = ft.Text('', size=12)
-        self.sw_update = ft.Switch(label='Buscar atualizações ao abrir', value=nuc.checar_atualizacoes_habilitadas(),
+        self.sw_update = ft.Switch(label=tr('Buscar atualizações ao abrir'), value=nuc.checar_atualizacoes_habilitadas(),
                                    on_change=self.alternar_atualizacao)
-        self.btn_update = ft.Button(content='Verificar agora', icon=ft.Icons.SYSTEM_UPDATE,
+        self.btn_update = ft.Button(content=tr('Verificar agora'), icon=ft.Icons.SYSTEM_UPDATE,
                                     on_click=self.verificar_agora)
         self.seg = ft.SegmentedButton(
             selected=['sp_yt'], allow_multiple_selection=False, on_change=self.trocar_modo,
             segments=[ft.Segment(value='sp_yt', label=ft.Text('Spotify ➔ YT Music')),
                       ft.Segment(value='yt_sp', label=ft.Text('YT Music ➔ Spotify'))])
-        self.campo_origem = ft.TextField(label='Link ou ID da playlist do Spotify',
+        self.campo_origem = ft.TextField(label=tr('Link ou ID da playlist do Spotify'),
                                          hint_text='https://open.spotify.com/playlist/...')
-        self.campo_destino = ft.TextField(label='Nome da nova playlist no YouTube Music',
-                                          hint_text='Minha Playlist Importada')
-        self.btn_iniciar = ft.Button(content='Iniciar migração', icon=ft.Icons.PLAY_ARROW, on_click=self.iniciar)
-        self.btn_pausar = ft.Button(content='Pausar', icon=ft.Icons.PAUSE, on_click=self.pausar, disabled=True)
-        self.btn_cancelar = ft.Button(content='Cancelar', icon=ft.Icons.STOP, on_click=self.cancelar, disabled=True)
-        self.lbl_prog_titulo = ft.Text('Pronto para começar', size=15, weight=ft.FontWeight.BOLD)
-        self.lbl_prog_detalhe = ft.Text('Cole o link da playlist e toque em Iniciar migração.',
+        self.campo_destino = ft.TextField(label=tr('Nome da nova playlist no YouTube Music'),
+                                          hint_text=tr('Minha Playlist Importada'))
+        self.btn_iniciar = ft.Button(content=tr('Iniciar migração'), icon=ft.Icons.PLAY_ARROW, on_click=self.iniciar)
+        self.btn_pausar = ft.Button(content=tr('Pausar'), icon=ft.Icons.PAUSE, on_click=self.pausar, disabled=True)
+        self.btn_cancelar = ft.Button(content=tr('Cancelar'), icon=ft.Icons.STOP, on_click=self.cancelar, disabled=True)
+        self.lbl_prog_titulo = ft.Text(tr('Pronto para começar'), size=15, weight=ft.FontWeight.BOLD)
+        self.lbl_prog_detalhe = ft.Text(tr('Cole o link da playlist e toque em Iniciar migração.'),
                                         size=12, color=TEXTO2)
         self.barra = ft.ProgressBar(value=0.0, color=TEAL, bgcolor=BORDA)
         self.lista_log = ft.ListView(controls=[], spacing=2, auto_scroll=True, expand=True)
@@ -178,21 +179,21 @@ class Tela:
             ft.Row([ft.Text('RHYFT', size=22, weight=ft.FontWeight.BOLD),
                     ft.Text(f'v{nuc.APP_VERSION}', size=12, color=TEXTO2)],
                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Text('Passe suas playlists entre o Spotify e o YouTube Music', size=12, color=TEXTO2),
+            ft.Text(tr('Passe suas playlists entre o Spotify e o YouTube Music'), size=12, color=TEXTO2),
             ft.Row([self.sw_update, self.btn_update], wrap=True),
             self.cartao(ft.Text('1. Spotify', weight=ft.FontWeight.BOLD), self.lbl_sp,
-                        ft.Button(content='Vincular / gerenciar', on_click=self.abrir_spotify)),
+                        ft.Button(content=tr('Vincular / gerenciar'), on_click=self.abrir_spotify)),
             self.cartao(ft.Text('2. YouTube Music', weight=ft.FontWeight.BOLD), self.lbl_yt,
-                        ft.Button(content='Importar do computador', on_click=self.abrir_yt)),
+                        ft.Button(content=tr('Importar do computador'), on_click=self.abrir_yt)),
             self.cartao(self.seg, self.campo_origem, self.campo_destino,
                         ft.Row([self.btn_iniciar, self.btn_pausar], wrap=True),
                         ft.Row([self.btn_cancelar,
-                                ft.TextButton(content='Histórico', icon=ft.Icons.HISTORY,
+                                ft.TextButton(content=tr('Histórico'), icon=ft.Icons.HISTORY,
                                               on_click=self.abrir_historico)], wrap=True)),
             self.cartao(self.lbl_prog_titulo, self.barra, self.lbl_prog_detalhe),
             ft.Container(content=self.lista_log, height=300, padding=8, border_radius=12,
                          bgcolor='#0A0B12', border=ft.Border.all(1, color=BORDA)),
-            ft.Text('Feito por deadbynetsu', size=11, color=TEXTO2, text_align=ft.TextAlign.CENTER),
+            ft.Text(tr('Feito por deadbynetsu'), size=11, color=TEXTO2, text_align=ft.TextAlign.CENTER),
         ])
         p.add(ft.SafeArea(expand=True, content=ft.Container(content=conteudo, padding=14, expand=True)))
         self.atualizar_status()
@@ -226,8 +227,8 @@ class Tela:
         self.lista_log.controls.clear()
 
     def set_progresso(self, titulo, detalhe, pct):
-        self.lbl_prog_titulo.value = titulo
-        self.lbl_prog_detalhe.value = nuc._cortar(detalhe or '', 90)
+        self.lbl_prog_titulo.value = tr(titulo)
+        self.lbl_prog_detalhe.value = nuc._cortar(tr(detalhe or ''), 90)
         if pct is not None:
             self.barra.value = max(0.0, min(1.0, pct))
 
@@ -236,12 +237,12 @@ class Tela:
         sel = list(self.seg.selected or [])
         self.modo = sel[0] if sel else 'sp_yt'
         reverso = self.modo == 'yt_sp'
-        self.campo_origem.label = ('Link ou ID da playlist do YouTube Music' if reverso
-                                   else 'Link ou ID da playlist do Spotify')
+        self.campo_origem.label = (tr('Link ou ID da playlist do YouTube Music') if reverso
+                                   else tr('Link ou ID da playlist do Spotify'))
         self.campo_origem.hint_text = ('https://music.youtube.com/playlist?list=...' if reverso
                                        else 'https://open.spotify.com/playlist/...')
-        self.campo_destino.label = ('Nome da nova playlist no Spotify (vazio = mesmo nome)' if reverso
-                                    else 'Nome da nova playlist no YouTube Music')
+        self.campo_destino.label = (tr('Nome da nova playlist no Spotify (vazio = mesmo nome)') if reverso
+                                    else tr('Nome da nova playlist no YouTube Music'))
         self.campo_origem.value = ''
         self.campo_destino.value = ''
         self.motor._ui_progresso_reset()
@@ -253,7 +254,7 @@ class Tela:
         if self.controle is not None:
             return
         if not origem:
-            self.mensagem('Aviso', 'Cole o link da playlist de origem.')
+            self.mensagem(tr('Aviso'), tr('Cole o link da playlist de origem.'))
             return
         if not nuc.spotify_vinculado():
             self.mensagem('Spotify não vinculado', 'Toque em "Vincular / gerenciar" no cartão do Spotify.')
@@ -269,7 +270,7 @@ class Tela:
         self.controle = nuc.ControleMigracao()
         self.btn_iniciar.disabled, self.btn_iniciar.content = True, 'Migrando...'
         self.btn_pausar.disabled = self.btn_cancelar.disabled = False
-        self.btn_pausar.content = 'Pausar'
+        self.btn_pausar.content = tr('Pausar')
         self.seg.disabled = True
         self.limpar_log()
         self.motor._ui_progresso_reset('Conectando...', 'Lendo as músicas da playlist.')
@@ -279,9 +280,9 @@ class Tela:
     def migracao_terminada(self, controle):
         if self.controle is controle:
             self.controle = None
-        self.btn_iniciar.disabled, self.btn_iniciar.content = False, 'Iniciar migração'
+        self.btn_iniciar.disabled, self.btn_iniciar.content = False, tr('Iniciar migração')
         self.btn_pausar.disabled = self.btn_cancelar.disabled = True
-        self.btn_pausar.content, self.btn_cancelar.content = 'Pausar', 'Cancelar'
+        self.btn_pausar.content, self.btn_cancelar.content = tr('Pausar'), tr('Cancelar')
         self.seg.disabled = False
 
     def pausar(self, e):
@@ -303,7 +304,7 @@ class Tela:
             self.btn_pausar.disabled, self.btn_cancelar.disabled = True, True
             self.btn_cancelar.content = 'Cancelando...'
             self.add_log('🛑 Cancelamento pedido: paro assim que possível...', 'aviso')
-        self.confirmar('Cancelar migração',
+        self.confirmar(tr('Cancelar migração'),
                        'O progresso será APAGADO (não dá para retomar). A playlist já criada no destino '
                        'NÃO é apagada. Cancelar mesmo?', confirmado)
 
@@ -321,7 +322,7 @@ class Tela:
             content=ft.Column([ft.Text(f'No {origem}: {nuc._cortar(faixa, 62)}', size=13,
                                        weight=ft.FontWeight.BOLD)] + botoes, tight=True, spacing=8,
                               scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton(content='Nenhuma dessas (pular)', on_click=lambda e: fechar(None))]))
+            actions=[ft.TextButton(content=tr('Nenhuma dessas (pular)'), on_click=lambda e: fechar(None))]))
 
     # ---------------------------------------------------------------- atualizações
     def alternar_atualizacao(self, e):
@@ -333,7 +334,7 @@ class Tela:
     def verificar_agora(self, e):
         if self.btn_update.disabled:
             return
-        self.btn_update.disabled, self.btn_update.content = True, 'Verificando...'
+        self.btn_update.disabled, self.btn_update.content = True, tr('Verificando...')
         self.checar_atualizacao(manual=True)
 
     def checar_atualizacao(self, manual):
@@ -350,15 +351,15 @@ class Tela:
 
     def resultado_atualizacao(self, manual, ha_nova, info, erro):
         if manual:
-            self.btn_update.disabled, self.btn_update.content = False, 'Verificar agora'
+            self.btn_update.disabled, self.btn_update.content = False, tr('Verificar agora')
         if erro:
             if manual:   # na checagem automática o erro fica só no erros.log
-                self.mensagem('Atualizações', erro)
+                self.mensagem(tr('Atualizações'), erro)
             return
         if ha_nova:
             self.mostrar_atualizacao(info)
         elif manual:
-            self.mensagem('Atualizações', f'Você já está na versão mais recente (v{nuc.APP_VERSION}).')
+            self.mensagem(tr('Atualizações'), f'Você já está na versão mais recente (v{nuc.APP_VERSION}).')
 
     def mostrar_atualizacao(self, info):
         async def baixar(e):
@@ -376,8 +377,8 @@ class Tela:
                         size=12, color=TEXTO2),
                 ft.Text(info['notas'] or 'Sem detalhes adicionais.', size=12)],
                 tight=True, spacing=10, scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton(content='Depois', on_click=depois),
-                     ft.Button(content='Baixar atualização', on_click=baixar)]))
+            actions=[ft.TextButton(content=tr('Depois'), on_click=depois),
+                     ft.Button(content=tr('Baixar atualização'), on_click=baixar)]))
 
     # ---------------------------------------------------------------- Spotify
     def abrir_spotify(self, e):
@@ -459,12 +460,12 @@ class Tela:
                   'mostrar erro de conexão, copie o endereço da barra e cole no plano B.')
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=ft.Text('Vincular o Spotify'),
-            content=ft.Column([ft.Text(passos, size=12), ft.TextButton(content='Abrir painel do Spotify', on_click=abrir_painel),
-                               campo_id, ft.Button(content='Vincular e autorizar', on_click=vincular),
+            content=ft.Column([ft.Text(passos, size=12), ft.TextButton(content=tr('Abrir painel do Spotify'), on_click=abrir_painel),
+                               campo_id, ft.Button(content=tr('Vincular e autorizar'), on_click=vincular),
                                campo_url, ft.Button(content='Concluir (plano B)', on_click=concluir_manual),
                                status], tight=True, spacing=10, scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton(content='Desvincular', on_click=desvincular),
-                     ft.TextButton(content='Fechar', on_click=fechar)]))
+            actions=[ft.TextButton(content=tr('Desvincular'), on_click=desvincular),
+                     ft.TextButton(content=tr('Fechar'), on_click=fechar)]))
 
     # ---------------------------------------------------------------- YouTube Music
     def abrir_yt(self, e):
@@ -505,13 +506,13 @@ class Tela:
                   '"Copiar para o celular". Envie o texto para você mesmo (ex.: Mensagens salvas) e cole aqui. '
                   'Ele contém seu login do Google: trate como senha e apague a mensagem depois.')
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text('Importar do computador'),
+            modal=True, title=ft.Text(tr('Importar do computador')),
             content=ft.Column([ft.Text(passos, size=12), campo,
-                               ft.Row([ft.TextButton(content='Colar', on_click=colar),
-                                       ft.Button(content='Validar e salvar', on_click=salvar)], wrap=True),
+                               ft.Row([ft.TextButton(content=tr('Colar'), on_click=colar),
+                                       ft.Button(content=tr('Validar e salvar'), on_click=salvar)], wrap=True),
                                status], tight=True, spacing=10, scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton(content='Desvincular', on_click=desvincular),
-                     ft.TextButton(content='Fechar', on_click=fechar)]))
+            actions=[ft.TextButton(content=tr('Desvincular'), on_click=desvincular),
+                     ft.TextButton(content=tr('Fechar'), on_click=fechar)]))
 
     # ---------------------------------------------------------------- histórico
     def abrir_historico(self, e):
@@ -532,7 +533,7 @@ class Tela:
             for arq in arquivos:
                 coluna.controls.append(ft.Row([
                     ft.Text(nome_amigavel(arq), size=13, expand=True),
-                    ft.TextButton(content='Apagar', on_click=lambda e, a=arq: apagar(a))]))
+                    ft.TextButton(content=tr('Apagar'), on_click=lambda e, a=arq: apagar(a))]))
 
         def apagar(arq):
             try:
@@ -546,14 +547,16 @@ class Tela:
 
         montar_lista()
         self.page.show_dialog(ft.AlertDialog(
-            title=ft.Text('Progresso salvo'),
+            title=ft.Text(tr('Progresso salvo')),
             content=ft.Column([ft.Text('Para retomar uma migração, inicie de novo com o mesmo link e o '
                                        'mesmo nome de playlist.', size=12, color=TEXTO2), coluna],
                               tight=True, spacing=10),
-            actions=[ft.TextButton(content='Fechar', on_click=fechar)]))
+            actions=[ft.TextButton(content=tr('Fechar'), on_click=fechar)]))
 
 
 async def main(page: ft.Page):
+    from mobile_language import ensure_language
+    await ensure_language(page, nuc.DATA_DIR)
     tela = Tela(page)
     tela.montar()
     page.run_task(tela.poller)

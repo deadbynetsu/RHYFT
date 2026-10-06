@@ -15,6 +15,19 @@ argument".
 """
 import gettext
 import time
+import os
+import shutil
+
+# Resolve private Android storage before any bootstrap imports nucleo.
+_storage = os.environ.get('FLET_APP_STORAGE_DATA') or os.path.expanduser('~')
+_current_data = os.path.join(_storage, 'RHYFT')
+_legacy_data = os.path.join(_storage, 'MigradorPlaylists')
+if not os.path.exists(_current_data) and os.path.isdir(_legacy_data):
+    try:
+        shutil.copytree(_legacy_data, _current_data)
+    except OSError:
+        pass
+os.environ.setdefault('MIGRADOR_DATA_DIR', _current_data)
 
 import flet as ft
 import requests

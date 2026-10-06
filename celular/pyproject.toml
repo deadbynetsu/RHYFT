@@ -1,6 +1,6 @@
 [project]
 name = "migrador-playlists"
-version = "1.4.0"
+version = "1.5.0"
 description = "RHYFT: Spotify e YouTube Music nos dois sentidos."
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -36,3 +36,8 @@ dark_color = "#080A0F"
 [tool.flet.android.permission]
 "android.permission.INTERNET" = true
 "android.permission.ACCESS_NETWORK_STATE" = true
+
+# jni_flutter 1.0.4+1 generates bindings for jni ^1.1.0 while this
+# Flet/Flutter toolchain resolves jni 1.0.x. Keep the compatible plugin.
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = "1.0.3"

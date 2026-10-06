@@ -5,6 +5,7 @@ O usuário final só toca em "Entrar com Google". O APK usa o OAuth Device Flow
 oficial do Google para o cliente do tipo "TVs e dispositivos de entrada
 limitados" configurado pelo desenvolvedor.
 """
+from rhyft_i18n import tr
 import os
 import threading
 import time
@@ -66,8 +67,8 @@ def _patch_app(target):
                 return
             vistos.add(id(obj))
             try:
-                if getattr(obj, 'content', None) == 'Importar do computador':
-                    obj.content = 'Vincular / gerenciar'
+                if getattr(obj, 'content', None) == tr('Importar do computador'):
+                    obj.content = tr('Vincular / gerenciar')
             except Exception:
                 pass
             try:
@@ -111,9 +112,9 @@ def _patch_app(target):
     def abrir_yt_novo(self, e):
         status = ft.Text('', size=12)
         codigo = ft.Text('', size=18, weight=ft.FontWeight.BOLD, selectable=True)
-        btn_vincular = ft.Button(content='Entrar com Google', icon=ft.Icons.LOGIN)
-        btn_google = ft.Button(content='Abrir Google novamente', disabled=True)
-        btn_copiar = ft.TextButton(content='Copiar código', disabled=True)
+        btn_vincular = ft.Button(content=tr('Entrar com Google'), icon=ft.Icons.LOGIN)
+        btn_google = ft.Button(content=tr('Abrir Google novamente'), disabled=True)
+        btn_copiar = ft.TextButton(content=tr('Copiar código'), disabled=True)
         estado = {'cancelar': threading.Event(), 'url': '', 'codigo': ''}
 
         def avisar(tipo, texto):
@@ -123,7 +124,7 @@ def _patch_app(target):
 
         def liberar_botao():
             btn_vincular.disabled = False
-            btn_vincular.content = 'Entrar com Google'
+            btn_vincular.content = tr('Entrar com Google')
 
         def mostrar_codigo(user_code, verification_url):
             codigo.value = f'Código: {user_code}'
@@ -295,8 +296,8 @@ def _patch_app(target):
                 status,
             ], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
             actions=[
-                ft.TextButton(content='Desvincular', on_click=desvincular),
-                ft.TextButton(content='Fechar', on_click=fechar),
+                ft.TextButton(content=tr('Desvincular'), on_click=desvincular),
+                ft.TextButton(content=tr('Fechar'), on_click=fechar),
             ],
         ))
 

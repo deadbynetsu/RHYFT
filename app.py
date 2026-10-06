@@ -8,8 +8,9 @@ Cada pessoa usa as PRÓPRIAS contas:
   - YouTube Music: cola os cabeçalhos da requisição copiados do navegador. O app
     limpa, valida (faz uma chamada de teste) e só então salva.
 
-Nada de credenciais é embutido no código. Tudo fica em %APPDATA%\RHYFT.
+Nada de credenciais é embutido no código. Tudo fica na pasta RHYFT em %APPDATA%.
 """
+from rhyft_i18n import tr
 import base64
 import glob
 import hashlib
@@ -473,6 +474,8 @@ def verificar_atualizacoes_auto(app_root):
 class MigradorApp(MotorMigracao, ctk.CTk):
     def __init__(self):
         super().__init__()
+        from desktop_language import ensure_language
+        ensure_language(self, DATA_DIR)
         definir_fontes(self)
 
         self.title(f'RHYFT (v{APP_VERSION})')
@@ -494,7 +497,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
             row=0, column=0, rowspan=2, padx=(0, 14))
         ctk.CTkLabel(cab, text='RHYFT', font=fonte(22, 'bold'),
                      text_color=COR_TEXTO, anchor='w').grid(row=0, column=1, sticky='sw')
-        ctk.CTkLabel(cab, text='Passe suas playlists entre o Spotify e o YouTube Music',
+        ctk.CTkLabel(cab, text=tr('Passe suas playlists entre o Spotify e o YouTube Music'),
                      font=fonte(12), text_color=COR_TEXTO_2, anchor='w').grid(row=1, column=1, sticky='nw')
 
         # Topo Direito: Versão + Switch de Atualização Automática
@@ -504,7 +507,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         self.switch_update_var = ctk.BooleanVar(value=checar_atualizacoes_habilitadas())
         self.switch_update = ctk.CTkSwitch(
             frame_top_right,
-            text='Buscar atualizações',
+            text=tr('Buscar atualizações'),
             font=fonte(11),
             text_color=COR_TEXTO_2,
             progress_color=COR_TEAL,
@@ -515,7 +518,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         )
         self.switch_update.pack(side='right', padx=(10, 0))
 
-        self.btn_checar_update = botao(frame_top_right, 'Verificar agora', None, 'secundario',
+        self.btn_checar_update = botao(frame_top_right, tr('Verificar agora'), None, 'secundario',
                                        self.checar_atualizacao_manual, altura=28, largura=118)
         self.btn_checar_update.pack(side='right', padx=(10, 0))
 
@@ -548,31 +551,31 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         self.seg_modo.grid(row=0, column=0, columnspan=2, sticky='w', padx=18, pady=(16, 0))
 
         # entry_spotify = link/ID da playlist de ORIGEM; entry_yt = nome da playlist nova (DESTINO)
-        self.lbl_campo_origem = ctk.CTkLabel(form, text='Link ou ID da playlist do Spotify', font=fonte(12, 'bold'),
+        self.lbl_campo_origem = ctk.CTkLabel(form, text=tr('Link ou ID da playlist do Spotify'), font=fonte(12, 'bold'),
                                              text_color=COR_TEXTO_2, anchor='w')
         self.lbl_campo_origem.grid(row=1, column=0, sticky='w', padx=(18, 8), pady=(14, 4))
         self.entry_spotify = campo_texto(form, 'https://open.spotify.com/playlist/...')
         self.entry_spotify.grid(row=2, column=0, sticky='ew', padx=(18, 8))
 
-        self.lbl_campo_destino = ctk.CTkLabel(form, text='Nome da nova playlist no YouTube Music',
+        self.lbl_campo_destino = ctk.CTkLabel(form, text=tr('Nome da nova playlist no YouTube Music'),
                                               font=fonte(12, 'bold'), text_color=COR_TEXTO_2, anchor='w')
         self.lbl_campo_destino.grid(row=1, column=1, sticky='w', padx=(8, 18), pady=(14, 4))
-        self.entry_yt = campo_texto(form, 'Minha Playlist Importada')
+        self.entry_yt = campo_texto(form, tr('Minha Playlist Importada'))
         self.entry_yt.grid(row=2, column=1, sticky='ew', padx=(8, 18))
 
         acoes = ctk.CTkFrame(form, fg_color='transparent')
         acoes.grid(row=3, column=0, columnspan=2, sticky='ew', padx=18, pady=(16, 18))
         acoes.grid_columnconfigure(3, weight=1)
-        self.btn_iniciar = botao(acoes, 'Iniciar migração', 'play', 'primario',
+        self.btn_iniciar = botao(acoes, tr('Iniciar migração'), 'play', 'primario',
                                  self.iniciar_thread, altura=42, largura=176)
         self.btn_iniciar.grid(row=0, column=0, padx=(0, 8))
-        self.btn_pausar = botao(acoes, 'Pausar', 'pause', 'secundario',
+        self.btn_pausar = botao(acoes, tr('Pausar'), 'pause', 'secundario',
                                 self.pausar_migracao, altura=42, largura=116)
         self.btn_pausar.grid(row=0, column=1, padx=8)
-        self.btn_cancelar = botao(acoes, 'Cancelar', 'stop', 'perigo',
+        self.btn_cancelar = botao(acoes, tr('Cancelar'), 'stop', 'perigo',
                                   self.cancelar_migracao, altura=42, largura=122)
         self.btn_cancelar.grid(row=0, column=2, padx=8)
-        self.btn_historico = botao(acoes, 'Histórico', 'clock', 'fantasma',
+        self.btn_historico = botao(acoes, tr('Histórico'), 'clock', 'fantasma',
                                    self.abrir_janela_historico, altura=42, largura=122)
         self.btn_historico.grid(row=0, column=4, sticky='e')
         definir_ativo(self.btn_pausar, False)
@@ -610,9 +613,13 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         rodape = ctk.CTkFrame(self, fg_color='transparent')
         rodape.grid(row=5, column=0, padx=24, pady=(12, 16), sticky='ew')
         rodape.grid_columnconfigure(0, weight=1)
-        self.lbl_rodape = ctk.CTkLabel(rodape, text='Feito por deadbynetsu', font=fonte(12),
+        self.lbl_rodape = ctk.CTkLabel(rodape, text=tr('Feito por deadbynetsu'), font=fonte(12),
                                        text_color=COR_TEXTO_2, anchor='w')
         self.lbl_rodape.grid(row=0, column=0, sticky='w')
+        from desktop_language import open_language_settings
+        botao(rodape, tr('Idioma'), None, 'secundario',
+              lambda: open_language_settings(self, DATA_DIR), altura=32, largura=90).grid(
+                  row=1, column=0, sticky='w', pady=(8, 0))
         redes = ctk.CTkFrame(rodape, fg_color='transparent')
         redes.grid(row=0, column=1, sticky='e')
         for i, (nome, nome_icone, url, cor, largura) in enumerate(LINKS_SOCIAIS):
@@ -628,15 +635,15 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         self.modo = self._rotulos_modo.get(valor, 'sp_yt')
         reverso = self.modo == 'yt_sp'
         self.lbl_campo_origem.configure(
-            text='Link ou ID da playlist do YouTube Music' if reverso else 'Link ou ID da playlist do Spotify')
+            text=tr('Link ou ID da playlist do YouTube Music') if reverso else tr('Link ou ID da playlist do Spotify'))
         self.lbl_campo_destino.configure(
-            text='Nome da nova playlist no Spotify (vazio = mesmo nome)' if reverso
-            else 'Nome da nova playlist no YouTube Music')
+            text=tr('Nome da nova playlist no Spotify (vazio = mesmo nome)') if reverso
+            else tr('Nome da nova playlist no YouTube Music'))
         self.entry_spotify.configure(
             placeholder_text='https://music.youtube.com/playlist?list=...' if reverso
             else 'https://open.spotify.com/playlist/...')
-        self.entry_yt.configure(placeholder_text='Mesmo nome da playlist original' if reverso
-                                else 'Minha Playlist Importada')
+        self.entry_yt.configure(placeholder_text=tr('Mesmo nome da playlist original') if reverso
+                                else tr('Minha Playlist Importada'))
         self.entry_spotify.delete(0, ctk.END)
         self.entry_yt.delete(0, ctk.END)
         self.focus_set()
@@ -645,21 +652,21 @@ class MigradorApp(MotorMigracao, ctk.CTk):
     def checar_atualizacao_manual(self):
         if not self.btn_checar_update.cget('state') == 'normal':
             return
-        definir_ativo(self.btn_checar_update, False, 'Verificando...')
+        definir_ativo(self.btn_checar_update, False, tr('Verificando...'))
         threading.Thread(target=checar_atualizacao, args=(self, APP_VERSION, GITHUB_REPO, True),
                          daemon=True).start()
 
     def _resultado_atualizacao(self, manual, ha_nova, info, erro):
         if manual:
-            definir_ativo(self.btn_checar_update, True, 'Verificar agora')
+            definir_ativo(self.btn_checar_update, True, tr('Verificar agora'))
         if erro:
             if manual:   # na checagem automática o erro fica só no erros.log, sem incomodar
-                messagebox.showerror('Atualizações', erro, parent=self)
+                messagebox.showerror(tr('Atualizações'), erro, parent=self)
             return
         if ha_nova:
             exibir_janela_atualizacao(self, info['tag'], info['url'], info['notas'])
         elif manual:
-            messagebox.showinfo('Atualizações', f'Você já está na versão mais recente (v{APP_VERSION}).',
+            messagebox.showinfo(tr('Atualizações'), f'Você já está na versão mais recente (v{APP_VERSION}).',
                                 parent=self)
 
     def _ao_alternar_atualizacao(self):
@@ -680,7 +687,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
                      anchor='w').grid(row=0, column=1, sticky='sw', pady=(14, 0))
         status = ctk.CTkLabel(cx, text='', font=fonte(12), anchor='w')
         status.grid(row=1, column=1, sticky='nw', pady=(0, 14))
-        btn = botao(cx, 'Vincular', 'link', 'secundario', comando, altura=34, largura=112)
+        btn = botao(cx, tr('Vincular'), 'link', 'secundario', comando, altura=34, largura=112)
         btn.grid(row=0, column=2, rowspan=2, padx=(8, 14))
         return status, btn
 
@@ -744,7 +751,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
                 rotulo = f'{_cortar(c["yt_title"], 46)}  \u2014  {_cortar(c["yt_artist"] or "?", 28)}'
                 botao(janela, rotulo, 'music', 'secundario', lambda c=c: fechar(c),
                       altura=42).pack(fill='x', padx=24, pady=4)
-            botao(janela, 'Nenhuma dessas (pular)', None, 'perigo', fechar,
+            botao(janela, tr('Nenhuma dessas (pular)'), None, 'perigo', fechar,
                   altura=38).pack(fill='x', padx=24, pady=(12, 0))
 
         self.ui(_mostrar)
@@ -806,11 +813,11 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         sp_ok = spotify_vinculado()
         yt_ok = os.path.exists(YT_AUTH_PATH)
         definir_status(self.lbl_status_spotify, 'ok' if sp_ok else 'aviso',
-                       'Vinculado' if sp_ok else 'Não vinculado')
-        self.btn_spotify.configure(text='Gerenciar' if sp_ok else 'Vincular')
+                       tr('Vinculado') if sp_ok else tr('Não vinculado'))
+        self.btn_spotify.configure(text=tr('Gerenciar') if sp_ok else tr('Vincular'))
         definir_status(self.lbl_status_yt, 'ok' if yt_ok else 'aviso',
-                       'Vinculado' if yt_ok else 'Não vinculado')
-        self.btn_yt.configure(text='Gerenciar' if yt_ok else 'Vincular')
+                       tr('Vinculado') if yt_ok else tr('Não vinculado'))
+        self.btn_yt.configure(text=tr('Gerenciar') if yt_ok else tr('Vincular'))
         if mostrar_dicas:
             if sp_ok and yt_ok:
                 self.log('✅ Spotify e YouTube Music vinculados. É só colar o link da playlist e iniciar!', 'sucesso')
@@ -827,8 +834,8 @@ class MigradorApp(MotorMigracao, ctk.CTk):
 
     def _ui_progresso_reset(self, titulo='Pronto para começar',
                             detalhe='Cole o link da playlist e clique em Iniciar migração.'):
-        self.lbl_prog_titulo.configure(text=titulo)
-        self.lbl_prog_detalhe.configure(text=detalhe)
+        self.lbl_prog_titulo.configure(text=tr(titulo))
+        self.lbl_prog_detalhe.configure(text=tr(detalhe))
         self._mostrar_pct(0.0, animar=False)
 
     def _ui_progresso(self, feitos, total, detalhe='', fase='faixas'):
@@ -836,12 +843,12 @@ class MigradorApp(MotorMigracao, ctk.CTk):
             titulo = f'Aprovação manual: {min(feitos + 1, total)} de {total}'
         else:
             titulo = f'Item {min(feitos + 1, total)} de {total}'
-        self.lbl_prog_titulo.configure(text=titulo)
+        self.lbl_prog_titulo.configure(text=tr(titulo))
         self.lbl_prog_detalhe.configure(text=_cortar(detalhe))
         self._mostrar_pct(feitos / total if total else 0.0)
 
     def _ui_progresso_status(self, titulo, detalhe=''):
-        self.lbl_prog_titulo.configure(text=titulo)
+        self.lbl_prog_titulo.configure(text=tr(titulo))
         self.lbl_prog_detalhe.configure(text=_cortar(detalhe, 90))
 
     def _ui_progresso_fim(self, titulo, detalhe=''):
@@ -909,17 +916,17 @@ class MigradorApp(MotorMigracao, ctk.CTk):
 
         frame_btns = ctk.CTkFrame(corpo, fg_color='transparent')
         frame_btns.pack(anchor='w', padx=24, pady=(12, 18))
-        btn_vincular = botao(frame_btns, 'Vincular e autorizar', 'link', 'primario',
+        btn_vincular = botao(frame_btns, tr('Vincular e autorizar'), 'link', 'primario',
                              altura=40, largura=240)
         btn_vincular.pack(side='left', padx=(0, 8))
-        btn_desvincular = botao(frame_btns, 'Desvincular', 'x', 'perigo', altura=40, largura=134)
+        btn_desvincular = botao(frame_btns, tr('Desvincular'), 'x', 'perigo', altura=40, largura=134)
         btn_desvincular.pack(side='left')
 
         def concluir(ok, info):
             self.atualizar_status_vinculos()
             if not janela.winfo_exists():
                 return
-            definir_ativo(btn_vincular, True, 'Vincular e autorizar')
+            definir_ativo(btn_vincular, True, tr('Vincular e autorizar'))
             if ok:
                 quem = f' como {info}' if info else ''
                 definir_status(lbl_status, 'ok', f'Spotify vinculado{quem}!')
@@ -961,7 +968,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
             threading.Thread(target=trabalho, daemon=True).start()
 
         def desvincular():
-            if not messagebox.askyesno('Desvincular', 'Remover a vinculação do Spotify deste computador?', parent=janela):
+            if not messagebox.askyesno(tr('Desvincular'), 'Remover a vinculação do Spotify deste computador?', parent=janela):
                 return
             for caminho in (SPOTIFY_TOKEN_PATH, SPOTIFY_CONFIG_PATH):
                 if os.path.exists(caminho):
@@ -1012,9 +1019,9 @@ class MigradorApp(MotorMigracao, ctk.CTk):
 
         frame_btns = ctk.CTkFrame(corpo, fg_color='transparent')
         frame_btns.pack(anchor='w', padx=24, pady=(12, 18))
-        btn_salvar = botao(frame_btns, 'Validar e salvar', 'check', 'primario', altura=40, largura=200)
+        btn_salvar = botao(frame_btns, tr('Validar e salvar'), 'check', 'primario', altura=40, largura=200)
         btn_salvar.pack(side='left', padx=(0, 8))
-        btn_desvincular = botao(frame_btns, 'Desvincular', 'x', 'perigo', altura=40, largura=134)
+        btn_desvincular = botao(frame_btns, tr('Desvincular'), 'x', 'perigo', altura=40, largura=134)
         btn_desvincular.pack(side='left', padx=(0, 8))
         btn_celular = botao(frame_btns, 'Copiar para o celular', 'copy', 'secundario', altura=40, largura=220)
         btn_celular.pack(side='left')
@@ -1023,7 +1030,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
             self.atualizar_status_vinculos()
             if not janela.winfo_exists():
                 return
-            definir_ativo(btn_salvar, True, 'Validar e salvar')
+            definir_ativo(btn_salvar, True, tr('Validar e salvar'))
             if ok:
                 definir_status(lbl_status, 'ok', f'YouTube Music vinculado ({info})!')
                 txt_input.delete('1.0', ctk.END)
@@ -1050,7 +1057,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
             threading.Thread(target=trabalho, daemon=True).start()
 
         def desvincular():
-            if not messagebox.askyesno('Desvincular', 'Remover a vinculação do YouTube Music deste computador?', parent=janela):
+            if not messagebox.askyesno(tr('Desvincular'), 'Remover a vinculação do YouTube Music deste computador?', parent=janela):
                 return
             if os.path.exists(YT_AUTH_PATH):
                 os.remove(YT_AUTH_PATH)
@@ -1091,7 +1098,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
                 widget.destroy()
             arquivos = glob.glob(os.path.join(DATA_DIR, 'progresso_*.json'))
             if not arquivos:
-                ctk.CTkLabel(frame_lista, text='Nenhum histórico guardado.',
+                ctk.CTkLabel(frame_lista, text=tr('Nenhum histórico guardado.'),
                              font=fonte(12), text_color=COR_TEXTO_2).pack(padx=10, pady=40)
                 return
             for arquivo in arquivos:
@@ -1118,7 +1125,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
                         except Exception as e:
                             messagebox.showerror('Erro', f'Não foi possível apagar o arquivo: {e}', parent=janela)
 
-                botao(row, 'Apagar', 'trash', 'perigo', apagar, altura=30, largura=100).pack(
+                botao(row, tr('Apagar'), 'trash', 'perigo', apagar, altura=30, largura=100).pack(
                     side='right', padx=10)
 
         atualizar_lista()
@@ -1129,7 +1136,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         reverso = self.modo == 'yt_sp'
 
         if not origem:
-            messagebox.showwarning('Aviso', 'Por favor, insira o link do YouTube Music!' if reverso
+            messagebox.showwarning(tr('Aviso'), 'Por favor, insira o link do YouTube Music!' if reverso
                                    else 'Por favor, insira o link do Spotify!')
             return
         if not spotify_vinculado():
@@ -1150,8 +1157,8 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         controle = ControleMigracao()
         self._controle = controle
         definir_ativo(self.btn_iniciar, False, 'Migrando...')
-        definir_ativo(self.btn_pausar, True, 'Pausar')
-        definir_ativo(self.btn_cancelar, True, 'Cancelar')
+        definir_ativo(self.btn_pausar, True, tr('Pausar'))
+        definir_ativo(self.btn_cancelar, True, tr('Cancelar'))
         self.seg_modo.configure(state='disabled')
         self._limpar_log()
         if reverso:
@@ -1175,7 +1182,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         if controle is None:
             return
         if not messagebox.askyesno(
-                'Cancelar migração',
+                tr('Cancelar migração'),
                 'Cancelar a migração em andamento?\n\n'
                 '• O arquivo de progresso será APAGADO (não dá para retomar depois).\n'
                 '• A playlist que já foi criada no YouTube Music NÃO será apagada: '
@@ -1193,9 +1200,9 @@ class MigradorApp(MotorMigracao, ctk.CTk):
     def _ui_migracao_terminada(self, controle):
         if self._controle is controle:
             self._controle = None
-        definir_ativo(self.btn_iniciar, True, 'Iniciar migração')
-        definir_ativo(self.btn_pausar, False, 'Pausar')
-        definir_ativo(self.btn_cancelar, False, 'Cancelar')
+        definir_ativo(self.btn_iniciar, True, tr('Iniciar migração'))
+        definir_ativo(self.btn_pausar, False, tr('Pausar'))
+        definir_ativo(self.btn_cancelar, False, tr('Cancelar'))
         self.seg_modo.configure(state='normal')
 
     def _ui_travar_controles(self):

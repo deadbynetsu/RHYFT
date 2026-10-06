@@ -38,12 +38,12 @@ from ytmusicapi import YTMusic
 # ============================== CAMINHOS & CONFIGURAÇÕES ======================
 APP_NAME = 'RHYFT'
 LEGACY_APP_NAME = 'MigradorPlaylists'
-APP_VERSION = '1.4.0'
+APP_VERSION = '1.5.0'
 TAMANHO_LOTE = 10          # quantas músicas por envio ao YouTube Music (cada lote é conferido depois)
 TOLERANCIA_DURACAO = 15    # segundos de diferença aceitos entre Spotify e YouTube
 PAUSA_BUSCA_SPOTIFY = 0.4  # segundos entre uma busca e outra no Spotify (YouTube ➔ Spotify)
 SPOTIFY_MARKET = 'BR'      # o país da conta tem prioridade quando o token é de usuário
-GITHUB_REPO = 'deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator'  # "usuario/repositorio" onde ficam as Releases
+GITHUB_REPO = 'deadbynetsu/RHYFT'  # "usuario/repositorio" onde ficam as Releases
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)

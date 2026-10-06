@@ -1,20 +1,8 @@
 name: Build Windows
 
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    branches: ["main"]
-    tags: ["v*"]
-    paths:
-      - "app.py"
-      - "app_branded.py"
-      - "assets/**"
-      - "nucleo.py"
-      - "requirements.txt"
-      - "build.bat"
-      - "ferramentas/gerar_branding_windows.py"
-      - "ferramentas/gerar_version_info_windows.py"
-      - ".github/workflows/build.yml"
 
 permissions:
   contents: read
@@ -57,6 +45,7 @@ jobs:
             --icon "assets\generated\rhyft_icon.ico" `
             --version-file build_meta\version_info.txt `
             --add-data "assets\generated;assets\generated" `
+            --add-data "locales;locales" `
             --collect-all customtkinter `
             --collect-all ytmusicapi `
             --collect-all certifi `
@@ -90,22 +79,32 @@ jobs:
       - name: Testar inicialização do EXE
         shell: pwsh
         run: |
-          $proc = Start-Process -FilePath "dist\RHYFT.exe" -PassThru
-          Start-Sleep -Seconds 10
-          $proc.Refresh()
-          if ($proc.HasExited) {
-            throw "RHYFT.exe fechou sozinho durante o teste de inicialização. Exit code: $($proc.ExitCode)"
+          $env:MIGRADOR_DATA_DIR = Join-Path $env:RUNNER_TEMP "rhyft-smoke"
+          New-Item -ItemType Directory -Force $env:MIGRADOR_DATA_DIR | Out-Null
+          '{"auto_update": false}' | Set-Content (Join-Path $env:MIGRADOR_DATA_DIR 'settings.json') -Encoding utf8NoBOM
+          foreach ($mode in @('onboarding', 'saved-language')) {
+            if ($mode -eq 'saved-language') {
+              '{"language": "ja"}' | Set-Content (Join-Path $env:MIGRADOR_DATA_DIR 'language.json') -Encoding utf8NoBOM
+            }
+            $proc = Start-Process -FilePath "dist\RHYFT.exe" -WindowStyle Hidden -PassThru
+            try {
+              Start-Sleep -Seconds 10
+              $proc.Refresh()
+              if ($proc.HasExited) {
+                throw "RHYFT.exe falhou no smoke test $mode. Exit code: $($proc.ExitCode)"
+              }
+              Write-Host "Smoke test aprovado: $mode."
+            } finally {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
           }
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          Write-Host "RHYFT.exe permaneceu aberto no smoke test."
 
       - name: Verificar build com Microsoft Defender
         shell: pwsh
         run: |
           $exe = (Resolve-Path "dist\RHYFT.exe").Path
           if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
-            Write-Warning "Microsoft Defender não está disponível neste runner."
-            exit 0
+            throw "Microsoft Defender não está disponível: a release exige esta verificação."
           }
 
           Start-MpScan -ScanType CustomScan -ScanPath $exe -ErrorAction Stop
@@ -140,4 +139,3 @@ jobs:
             RHYFT-windows.zip
             RHYFT-windows.zip.sha256
           if-no-files-found: error
-

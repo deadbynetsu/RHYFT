@@ -1,0 +1,76 @@
+name: Validate and release RHYFT
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.py'
+      - 'requirements.txt'
+      - 'build.bat'
+      - 'assets/**'
+      - 'locales/**'
+      - 'celular/**'
+      - 'ferramentas/**'
+      - 'tests/**'
+      - 'releases/**'
+      - '.github/workflows/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rhyft-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt flet==1.0.3 PyYAML
+      - name: Test localization, both interfaces and release safety
+        env:
+          PYTHONUTF8: '1'
+        run: python -m unittest discover -s tests -v
+
+  windows:
+    needs: tests
+    uses: ./.github/workflows/build.yml
+
+  android:
+    if: github.event_name != 'pull_request'
+    needs: tests
+    uses: ./.github/workflows/build-android.yml
+    secrets: inherit
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [tests, windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v5
+        with:
+          name: RHYFT-windows
+          path: release-assets
+      - uses: actions/download-artifact@v5
+        with:
+          name: RHYFT-android
+          path: release-assets
+      - name: Publish a new release after both builds pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ferramentas/publish_release.py
