@@ -32,15 +32,17 @@
   }
 
   async function loadRelease() {
-    const fallback = 'https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest';
+    const fallback = 'https://github.com/deadbynetsu/RHYFT/releases/latest';
     try {
-      const response = await fetch('https://api.github.com/repos/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest', {
+      const response = await fetch('https://api.github.com/repos/deadbynetsu/RHYFT/releases/latest', {
         headers: { Accept: 'application/vnd.github+json' }
       });
       if (!response.ok) throw new Error(`GitHub ${response.status}`);
       const release = await response.json();
       const assets = release.assets || [];
-      const windows = assets.find(a => /^RHYFT-windows\.zip$/i.test(a.name)) || assets.find(a => /windows.*\.zip$/i.test(a.name)) || assets.find(a => /\.zip$/i.test(a.name) && /(rhyft|migrador)/i.test(a.name));
+      const windowsExe = assets.find(a => /^RHYFT\.exe$/i.test(a.name));
+      const windowsZip = assets.find(a => /^RHYFT-windows\.zip$/i.test(a.name)) || assets.find(a => /windows.*\.zip$/i.test(a.name));
+      const windows = windowsExe || windowsZip || assets.find(a => /\.(exe|zip)$/i.test(a.name) && /(rhyft|windows)/i.test(a.name));
       const android = assets.find(a => /^RHYFT-android\.apk$/i.test(a.name)) || assets.find(a => /android.*\.apk$/i.test(a.name)) || assets.find(a => /\.apk$/i.test(a.name));
       const version = release.tag_name || 'Release mais recente';
       const date = release.published_at ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(new Date(release.published_at)) : 'GitHub Releases';
