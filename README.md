@@ -10,7 +10,7 @@ Migre suas playlists entre **Spotify** e **YouTube Music** de forma simples, rá
 
 [![Site](https://img.shields.io/badge/Abrir%20site-migrador--playlists.netlify.app-00d084?style=for-the-badge&logo=netlify&logoColor=white)](https://migrador-playlists.netlify.app/)
 [![Migrar online](https://img.shields.io/badge/Migrar%20online-Abrir%20no%20navegador-7c5cff?style=for-the-badge)](https://migrador-playlists.netlify.app/migrar.html)
-[![Releases](https://img.shields.io/badge/Downloads-GitHub%20Releases-24292f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest)
+[![Releases](https://img.shields.io/badge/Downloads-GitHub%20Releases-24292f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/deadbynetsu/RHYFT/releases/latest)
 
 **Windows · Android · Web · Gratuito · Open Source**
 
@@ -45,6 +45,7 @@ No site você encontra a versão Web, downloads atualizados, Política de Privac
 - Progresso da migração em tempo real
 - Login via OAuth
 - Versões para **Windows**, **Android** e **Web**
+- Download do Windows em **um único `RHYFT.exe`**
 - Downloads atualizados automaticamente pela Release mais recente
 - Projeto gratuito e open source
 
@@ -55,8 +56,8 @@ No site você encontra a versão Web, downloads atualizados, Política de Privac
 | Plataforma | Como usar |
 |---|---|
 | 🌐 **Web** | [Abrir o RHYFT Online](https://migrador-playlists.netlify.app/migrar.html) |
-| 🪟 **Windows** | [Baixar a versão mais recente](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest) |
-| 🤖 **Android** | [Baixar o APK mais recente](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest) |
+| 🪟 **Windows** | [Baixar a versão mais recente](https://github.com/deadbynetsu/RHYFT/releases/latest) |
+| 🤖 **Android** | [Baixar o APK mais recente](https://github.com/deadbynetsu/RHYFT/releases/latest) |
 
 Os builds de Windows e Android são gerados automaticamente pelo **GitHub Actions** e publicados nas Releases.
 
@@ -126,6 +127,6 @@ Distribuído sob a licença **MIT**.
 
 Feito por **[deadbynetsu](https://github.com/deadbynetsu)**
 
-[🌐 Site](https://migrador-playlists.netlify.app/) · [🎵 Migrar online](https://migrador-playlists.netlify.app/migrar.html) · [📦 Releases](https://github.com/deadbynetsu/Spotify-Youtube-Music-Playlists-Migrator/releases/latest)
+[🌐 Site](https://migrador-playlists.netlify.app/) · [🎵 Migrar online](https://migrador-playlists.netlify.app/migrar.html) · [📦 Releases](https://github.com/deadbynetsu/RHYFT/releases/latest)
 
 </div>
