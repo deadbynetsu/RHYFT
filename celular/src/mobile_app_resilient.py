@@ -95,6 +95,11 @@ from youtube_official import HybridYTMusic  # noqa: E402
 HybridYTMusic.PUBLIC_CLASS = ytmusicapi.YTMusic
 ytmusicapi.YTMusic = HybridYTMusic
 
+# Garante que checagem de atualização e links de Release usem o repositório
+# atual do projeto, mesmo enquanto identificadores legados ainda existirem no núcleo.
+import nucleo as _nucleo  # noqa: E402
+_nucleo.GITHUB_REPO = "deadbynetsu/RHYFT"
+
 # O mobile_app também intercepta ft.run para instalar o OAuth. Colocamos nossas
 # camadas ANTES dele: primeiro reorganizamos a UI e depois aplicamos a identidade.
 from mobile_ui_refresh import apply_mobile_ui  # noqa: E402
