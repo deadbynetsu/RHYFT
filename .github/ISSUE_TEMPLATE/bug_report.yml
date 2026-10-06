@@ -1,0 +1,52 @@
+name: Bug report
+about: Relate um problema reproduzível no RHYFT
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a melhorar o RHYFT. Não inclua tokens, cookies, Client Secrets ou dados pessoais.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Plataforma
+      options:
+        - Windows
+        - Android
+        - Web
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versão do RHYFT
+      placeholder: Ex.: 1.4.0
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: O que aconteceu?
+      description: Descreva o problema de forma objetiva.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. Abra...
+        2. Conecte...
+        3. Clique...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs ou detalhes adicionais
+      description: Remova qualquer token, cookie, credencial ou informação privada antes de enviar.
