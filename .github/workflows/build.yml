@@ -17,7 +17,7 @@ on:
       - ".github/workflows/build.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-windows:
@@ -141,35 +141,3 @@ jobs:
             RHYFT-windows.zip.sha256
           if-no-files-found: error
 
-      - name: Publicar Windows na Release da versão
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $version = (python -c "import nucleo; print(nucleo.APP_VERSION)").Trim()
-          $tag = "v$version"
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag RHYFT.exe RHYFT.exe.sha256 RHYFT-windows.zip RHYFT-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Falha ao publicar os arquivos Windows na Release $tag." }
-
-            foreach ($asset in @(
-              "MigradorPlaylists-windows.zip",
-              "MigradorPlaylists-windows.zip.sha256",
-              "MigradorPlaylists.exe.sha256"
-            )) {
-              gh release delete-asset $tag $asset --repo $env:GITHUB_REPOSITORY -y 2>$null
-              if ($LASTEXITCODE -ne 0) {
-                Write-Host "Asset legado ausente ou já removido: $asset"
-                $global:LASTEXITCODE = 0
-              }
-            }
-
-            Write-Host "Windows RHYFT atualizado na Release $tag."
-            exit 0
-          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
-            gh release create $tag RHYFT.exe RHYFT.exe.sha256 RHYFT-windows.zip RHYFT-windows.zip.sha256 --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
-            if ($LASTEXITCODE -ne 0) { throw "Falha ao criar a Release $tag." }
-          } else {
-            Write-Warning "Release $tag ainda não existe; os arquivos ficaram nos Artifacts."
-          }

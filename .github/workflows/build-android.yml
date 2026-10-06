@@ -11,7 +11,7 @@ on:
       - ".github/workflows/build-android.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   apk:
@@ -149,27 +149,3 @@ jobs:
           cp "$APK" RHYFT-android.apk
           sha256sum RHYFT-android.apk | awk '{print $1}' > RHYFT-android.apk.sha256
 
-      - name: Publicar APK na Release da versão
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="v${{ steps.versao.outputs.numero }}"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" \
-              RHYFT-android.apk \
-              RHYFT-android.apk.sha256 \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-            gh release delete-asset "$TAG" MigradorPlaylists-android.apk --repo "$GITHUB_REPOSITORY" -y >/dev/null 2>&1 || true
-            gh release delete-asset "$TAG" MigradorPlaylists-android.apk.sha256 --repo "$GITHUB_REPOSITORY" -y >/dev/null 2>&1 || true
-            echo "APK RHYFT atualizado na Release $TAG."
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            gh release create "$TAG" \
-              RHYFT-android.apk \
-              RHYFT-android.apk.sha256 \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$TAG" \
-              --generate-notes
-          else
-            echo "::warning title=Release não encontrada::A Release $TAG ainda não existe. O APK ficou disponível nos Artifacts."
-          fi
