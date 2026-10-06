@@ -1,145 +1,184 @@
 <div align="center">
 
+<img src="./assets/rhyft_mark.svg" width="128" alt="RHYFT logo">
+
 # RHYFT
 
-**Your music. No borders.**
+### Your music. No borders.
 
-### Spotify ⇄ YouTube Music
+Migre playlists entre **Spotify** e **YouTube Music** nos dois sentidos — pela Web, Windows ou Android.
 
-Migre suas playlists entre **Spotify** e **YouTube Music** de forma simples, rápida e organizada.
+[![Site](https://img.shields.io/badge/SITE-RHYFT-00D084?style=for-the-badge&logo=netlify&logoColor=white)](https://migrador-playlists.netlify.app/)
+[![Migrar online](https://img.shields.io/badge/MIGRAR-ONLINE-7C5CFF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://migrador-playlists.netlify.app/migrar.html)
+[![Windows](https://img.shields.io/badge/BAIXAR-WINDOWS-0078D4?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe)
+[![Android](https://img.shields.io/badge/BAIXAR-ANDROID-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk)
 
-[![Site](https://img.shields.io/badge/Abrir%20site-migrador--playlists.netlify.app-00d084?style=for-the-badge&logo=netlify&logoColor=white)](https://migrador-playlists.netlify.app/)
-[![Migrar online](https://img.shields.io/badge/Migrar%20online-Abrir%20no%20navegador-7c5cff?style=for-the-badge)](https://migrador-playlists.netlify.app/migrar.html)
-[![Releases](https://img.shields.io/badge/Downloads-GitHub%20Releases-24292f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/deadbynetsu/RHYFT/releases/latest)
+[![Build Windows](https://github.com/deadbynetsu/RHYFT/actions/workflows/build.yml/badge.svg)](https://github.com/deadbynetsu/RHYFT/actions/workflows/build.yml)
+[![Build Android](https://github.com/deadbynetsu/RHYFT/actions/workflows/build-android.yml/badge.svg)](https://github.com/deadbynetsu/RHYFT/actions/workflows/build-android.yml)
+[![Latest Release](https://img.shields.io/github/v/release/deadbynetsu/RHYFT?display_name=tag&label=release)](https://github.com/deadbynetsu/RHYFT/releases/latest)
+[![License](https://img.shields.io/github/license/deadbynetsu/RHYFT)](./LICENSE)
 
 **Windows · Android · Web · Gratuito · Open Source**
 
-> Projeto independente, sem ligação oficial com Spotify, Google, YouTube ou YouTube Music.
+> Projeto independente. RHYFT não possui vínculo oficial com Spotify, Google, YouTube ou YouTube Music.
 
 </div>
 
 ---
 
-## ✨ O projeto
+## O que é o RHYFT?
 
-O **RHYFT** permite transferir playlists nos dois sentidos:
+O **RHYFT** foi criado para tirar o atrito de mudar de plataforma de música. Ele lê uma playlist de origem, procura as faixas no serviço de destino e cria uma nova playlist para você.
+
+Funciona nos dois sentidos:
 
 - **Spotify → YouTube Music**
 - **YouTube Music → Spotify**
 
-Você pode usar pelo navegador ou baixar a versão nativa para Windows e Android.
-
-### 🌐 Site oficial
-
-**https://migrador-playlists.netlify.app/**
-
-No site você encontra a versão Web, downloads atualizados, Política de Privacidade e Termos de Serviço.
+Quando uma correspondência não é confiável, o RHYFT não escolhe no escuro: ele pode deixar a faixa para **revisão manual**.
 
 ---
 
-## 🚀 Recursos
+## Plataformas
 
-- Migração bidirecional entre Spotify e YouTube Music
-- Correspondência automática de músicas
-- Revisão manual quando uma correspondência fica incerta
-- Progresso da migração em tempo real
-- Login via OAuth
-- Versões para **Windows**, **Android** e **Web**
-- Download do Windows em **um único `RHYFT.exe`**
-- Downloads atualizados automaticamente pela Release mais recente
-- Projeto gratuito e open source
+| Plataforma | Experiência | Acesso |
+|---|---|---|
+| 🌐 **Web** | Sem instalação, histórico salvo no navegador e revisão de faixas incertas | [Abrir RHYFT Online](https://migrador-playlists.netlify.app/migrar.html) |
+| 🪟 **Windows** | App nativo em um único `RHYFT.exe`, progresso, pausa/retomada e histórico local | [Baixar RHYFT.exe](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe) |
+| 🤖 **Android** | Interface mobile, autenticação de contas e migração direto pelo celular | [Baixar APK](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk) |
+
+Os builds oficiais de Windows e Android são gerados pelo **GitHub Actions** e publicados automaticamente em [Releases](https://github.com/deadbynetsu/RHYFT/releases/latest).
 
 ---
 
-## 💻 Formas de usar
+## Principais recursos
 
-| Plataforma | Como usar |
-|---|---|
-| 🌐 **Web** | [Abrir o RHYFT Online](https://migrador-playlists.netlify.app/migrar.html) |
-| 🪟 **Windows** | [Baixar a versão mais recente](https://github.com/deadbynetsu/RHYFT/releases/latest) |
-| 🤖 **Android** | [Baixar o APK mais recente](https://github.com/deadbynetsu/RHYFT/releases/latest) |
-
-Os builds de Windows e Android são gerados automaticamente pelo **GitHub Actions** e publicados nas Releases.
+- Migração **bidirecional** entre Spotify e YouTube Music
+- Busca e correspondência automática de músicas
+- Revisão manual para resultados incertos
+- Progresso em tempo real
+- Pausa, cancelamento e retomada nas versões nativas
+- Histórico de migrações na Web
+- OAuth nas integrações Web/mobile onde aplicável
+- Downloads oficiais com **SHA-256**
+- Atualizações automáticas dos artefatos na Release
+- Código aberto sob licença MIT
 
 ---
 
-## 🔏 Code signing policy
+## Como funciona
 
-O RHYFT está solicitando assinatura de código pela **SignPath Foundation** para os binários oficiais de Windows. Depois da aprovação, somente artefatos oficiais gerados pelo workflow público deste repositório serão enviados para assinatura.
+```mermaid
+flowchart LR
+    A[Playlist de origem] --> B[RHYFT]
+    B --> C[Busca e correspondência]
+    C --> D{Confiança suficiente?}
+    D -- Sim --> E[Adicionar automaticamente]
+    D -- Não --> F[Revisão manual]
+    E --> G[Nova playlist]
+    F --> G
+```
+
+1. Conecte as contas necessárias.
+2. Escolha o sentido da migração.
+3. Cole o link ou ID da playlist.
+4. Defina o nome da playlist de destino.
+5. Inicie a migração.
+6. Revise somente as faixas que realmente precisarem da sua escolha.
+
+---
+
+## Privacidade e segurança
+
+O RHYFT não precisa da sua senha do Spotify ou Google. A autenticação usa os fluxos das próprias plataformas.
+
+- Na **Web**, sessões ficam protegidas em cookies `HttpOnly` e os tokens não são expostos ao JavaScript da página.
+- Nos **apps nativos**, configurações, tokens e progresso ficam no dispositivo do usuário.
+- Credenciais privadas e arquivos locais de autenticação não são versionados no repositório.
+
+[Política de Privacidade](https://migrador-playlists.netlify.app/privacidade.html) · [Termos de Serviço](https://migrador-playlists.netlify.app/termos.html)
+
+---
+
+## Windows e assinatura de código
+
+Os binários de Windows passam por smoke test e verificação com **Microsoft Defender** durante o workflow de build.
+
+O projeto também está em processo de solicitação de assinatura de código pela **SignPath Foundation**. Enquanto a assinatura oficial ainda não estiver ativa, versões baixadas fora da Microsoft Store podem exibir avisos de reputação do Windows.
 
 **Free code signing provided by SignPath.io, certificate by SignPath Foundation.**
 
-- [Política completa de assinatura de código](./CODE_SIGNING.md)
-- Committer/reviewer: [deadbynetsu](https://github.com/deadbynetsu)
-- Approver: [deadbynetsu](https://github.com/deadbynetsu)
-- [Política de Privacidade](https://migrador-playlists.netlify.app/privacidade.html)
+[Política de assinatura de código](./CODE_SIGNING.md)
 
 ---
 
-## 🔄 Como funciona
+## Stack
 
-1. Conecte suas contas do Spotify e Google/YouTube.
-2. Escolha o sentido da migração.
-3. Cole o link ou ID da playlist.
-4. Escolha o nome da playlist de destino.
-5. Inicie a migração.
-6. Revise apenas as músicas que precisarem de confirmação.
-
----
-
-## 🔐 Privacidade
-
-O projeto usa OAuth para autenticação — sua senha do Spotify ou Google não é entregue ao RHYFT.
-
-Nos aplicativos nativos, tokens, configurações e progresso ficam no dispositivo. Na versão Web, as sessões são protegidas em cookies **HttpOnly** criptografados e os tokens não ficam expostos ao JavaScript da página.
-
-- [Política de Privacidade](https://migrador-playlists.netlify.app/privacidade.html)
-- [Termos de Serviço](https://migrador-playlists.netlify.app/termos.html)
+| Área | Tecnologias |
+|---|---|
+| Desktop | Python · CustomTkinter · Pillow · PyInstaller |
+| Android | Python · Flet |
+| Web | HTML · CSS · JavaScript · Netlify Functions |
+| Integrações | Spotify Web API · YouTube Data API · ytmusicapi |
+| CI/CD | GitHub Actions · Netlify |
 
 ---
 
-## 🛠️ Tecnologias
-
-- **Python**
-- **Flet**
-- **Spotify Web API**
-- **YouTube Data API**
-- **Netlify Functions**
-- **GitHub Actions**
-
----
-
-## 📁 Estrutura do projeto
+## Estrutura do projeto
 
 ```text
-app.py                     # Interface desktop
-nucleo.py                  # Lógica compartilhada dos apps nativos
-celular/                    # Aplicativo Android em Flet
-site/                       # Site oficial e RHYFT Web
-netlify/functions/api.js    # OAuth e integrações da versão Web
-netlify.toml                # Configuração do deploy no Netlify
-.github/workflows/          # Builds automáticos
+RHYFT/
+├── app.py                         # Interface principal do Windows
+├── app_branded.py                 # Entrada de build com branding do Windows
+├── nucleo.py                      # Lógica compartilhada dos apps nativos
+├── assets/                        # Identidade visual oficial do RHYFT
+├── celular/                       # Aplicativo Android em Flet
+├── site/                          # Landing page e RHYFT Web
+├── netlify/functions/api.js       # Backend/OAuth da versão Web
+├── ferramentas/                   # Scripts auxiliares de build
+└── .github/workflows/             # Builds automáticos de Windows e Android
 ```
 
 ---
 
-## 👨‍💻 Rodar pelo código-fonte
+## Rodar o app desktop pelo código-fonte
 
 ```bash
+git clone https://github.com/deadbynetsu/RHYFT.git
+cd RHYFT
 pip install -r requirements.txt
 python app.py
 ```
 
+Para gerar o executável no Windows:
+
+```bat
+build.bat
+```
+
 ---
 
-## 📄 Licença
+## Downloads oficiais
 
-Distribuído sob a licença **MIT**.
+Todos os downloads ficam em [**GitHub Releases**](https://github.com/deadbynetsu/RHYFT/releases/latest).
+
+| Arquivo | Uso |
+|---|---|
+| `RHYFT.exe` | Executável único para Windows |
+| `RHYFT-windows.zip` | Versão compactada do executável |
+| `RHYFT-android.apk` | Aplicativo Android |
+| `*.sha256` | Verificação de integridade dos downloads |
+
+---
+
+## Licença
+
+Distribuído sob a licença **MIT**. Veja [LICENSE](./LICENSE).
 
 <div align="center">
 
 Feito por **[deadbynetsu](https://github.com/deadbynetsu)**
 
-[🌐 Site](https://migrador-playlists.netlify.app/) · [🎵 Migrar online](https://migrador-playlists.netlify.app/migrar.html) · [📦 Releases](https://github.com/deadbynetsu/RHYFT/releases/latest)
+[Site](https://migrador-playlists.netlify.app/) · [Migrar online](https://migrador-playlists.netlify.app/migrar.html) · [Releases](https://github.com/deadbynetsu/RHYFT/releases/latest) · [Instagram](https://www.instagram.com/deadbynetsu.dev/) · [TikTok](https://www.tiktok.com/@deadbynetsu) · [YouTube](https://www.youtube.com/@DeadbyNeTsU)
 
 </div>
