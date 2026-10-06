@@ -1,10 +1,6 @@
 <div align="center">
 
-<img src="./assets/rhyft_mark.svg" width="128" alt="RHYFT logo">
-
-# RHYFT
-
-### Your music. No borders.
+<img src="./assets/rhyft_readme_banner.svg" width="100%" alt="RHYFT — Your music. No borders.">
 
 Migre playlists entre **Spotify** e **YouTube Music** nos dois sentidos — pela Web, Windows ou Android.
 
