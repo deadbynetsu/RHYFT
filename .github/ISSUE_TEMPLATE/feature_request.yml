@@ -1,0 +1,34 @@
+name: Sugestão de recurso
+about: Proponha uma melhoria para o RHYFT
+body:
+  - type: markdown
+    attributes:
+      value: Obrigado pela sugestão. Explique o problema que a ideia resolve antes de detalhar a solução.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema isso resolve?
+      description: Descreva a necessidade ou dificuldade atual.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solução sugerida
+      description: Explique como você imagina que o RHYFT poderia resolver isso.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Plataforma principal
+      options:
+        - Todas
+        - Windows
+        - Android
+        - Web
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto adicional
+      description: Imagens, exemplos ou referências podem ajudar.
