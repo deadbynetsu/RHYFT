@@ -63,6 +63,19 @@ Os builds de Windows e Android são gerados automaticamente pelo **GitHub Action
 
 ---
 
+## 🔏 Code signing policy
+
+O RHYFT está solicitando assinatura de código pela **SignPath Foundation** para os binários oficiais de Windows. Depois da aprovação, somente artefatos oficiais gerados pelo workflow público deste repositório serão enviados para assinatura.
+
+**Free code signing provided by SignPath.io, certificate by SignPath Foundation.**
+
+- [Política completa de assinatura de código](./CODE_SIGNING.md)
+- Committer/reviewer: [deadbynetsu](https://github.com/deadbynetsu)
+- Approver: [deadbynetsu](https://github.com/deadbynetsu)
+- [Política de Privacidade](https://migrador-playlists.netlify.app/privacidade.html)
+
+---
+
 ## 🔄 Como funciona
 
 1. Conecte suas contas do Spotify e Google/YouTube.
