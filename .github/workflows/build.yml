@@ -7,9 +7,12 @@ on:
     tags: ["v*"]
     paths:
       - "app.py"
+      - "app_branded.py"
+      - "assets/**"
       - "nucleo.py"
       - "requirements.txt"
       - "build.bat"
+      - "ferramentas/gerar_branding_windows.py"
       - "ferramentas/gerar_version_info_windows.py"
       - ".github/workflows/build.yml"
 
@@ -32,7 +35,11 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt "pyinstaller>=6.10,<7"
+          python -m pip install -r requirements.txt "pyinstaller>=6.10,<7" "cairosvg>=2.7,<3"
+
+      - name: Gerar branding oficial do Windows
+        shell: pwsh
+        run: python ferramentas/gerar_branding_windows.py
 
       - name: Gerar metadados do executável
         shell: pwsh
@@ -47,11 +54,13 @@ jobs:
             --onefile `
             --windowed `
             --name RHYFT `
+            --icon "assets\generated\rhyft_icon.ico" `
             --version-file build_meta\version_info.txt `
+            --add-data "assets\generated;assets\generated" `
             --collect-all customtkinter `
             --collect-all ytmusicapi `
             --collect-all certifi `
-            app.py
+            app_branded.py
 
           if (-not (Test-Path "dist\RHYFT.exe")) {
             throw "RHYFT.exe não foi gerado"
@@ -59,6 +68,24 @@ jobs:
 
           $size = [math]::Round((Get-Item "dist\RHYFT.exe").Length / 1MB, 2)
           Write-Host "RHYFT.exe gerado com $size MB."
+
+      - name: Validar ícone embutido no EXE
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $exe = (Resolve-Path "dist\RHYFT.exe").Path
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+          if ($null -eq $icon) {
+            throw "RHYFT.exe foi gerado sem ícone associado."
+          }
+          try {
+            if ($icon.Width -lt 16 -or $icon.Height -lt 16) {
+              throw "Ícone embutido inválido: $($icon.Width)x$($icon.Height)."
+            }
+            Write-Host "Ícone embutido validado: $($icon.Width)x$($icon.Height)."
+          } finally {
+            $icon.Dispose()
+          }
 
       - name: Testar inicialização do EXE
         shell: pwsh

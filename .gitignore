@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 *.spec
+assets/generated/
 
 # Android local signing key and generated secrets
 chave-android/

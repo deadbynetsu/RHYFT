@@ -1,34 +1,60 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 128 128" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="12" y1="8" x2="116" y2="122" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#111722"/>
-      <stop offset="1" stop-color="#080A0F"/>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#08b8b0"/>
+      <stop offset="0.55" stop-color="#27e4d3"/>
+      <stop offset="1" stop-color="#6ef6ed"/>
     </linearGradient>
-    <linearGradient id="green" x1="20" y1="24" x2="93" y2="43" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#20F08A"/>
-      <stop offset="1" stop-color="#00B978"/>
+    <linearGradient id="pink" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff927f"/>
+      <stop offset="0.5" stop-color="#ff5570"/>
+      <stop offset="1" stop-color="#ff2e8f"/>
     </linearGradient>
-    <linearGradient id="red" x1="108" y1="78" x2="34" y2="104" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FF3D56"/>
-      <stop offset="1" stop-color="#FF7B45"/>
+    <linearGradient id="bar1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5affea"/>
+      <stop offset="1" stop-color="#00c9b8"/>
     </linearGradient>
-    <linearGradient id="note" x1="44" y1="45" x2="83" y2="86" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F7FFF9"/>
-      <stop offset=".45" stop-color="#D9FFE9"/>
-      <stop offset="1" stop-color="#FFD7D8"/>
+    <linearGradient id="bar2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#effffb"/>
+      <stop offset="0.45" stop-color="#9ff5e6"/>
+      <stop offset="1" stop-color="#d780c9"/>
     </linearGradient>
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="3" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    <linearGradient id="bar3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb0a7"/>
+      <stop offset="1" stop-color="#ff3d7e"/>
+    </linearGradient>
+    <filter id="glowCyan" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="22" result="blur"/>
+      <feFlood flood-color="#16e8dc" flood-opacity="0.75"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowPink" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="22" result="blur"/>
+      <feFlood flood-color="#ff326f" flood-opacity="0.72"/>
+      <feComposite in2="blur" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#bg)" stroke="#242A36" stroke-width="2"/>
-  <path d="M23 57C27 32 46 20 68 20C83 20 96 26 105 37" stroke="url(#green)" stroke-width="11" stroke-linecap="round" filter="url(#glow)"/>
-  <path d="M100 25L107 39L91 41" fill="url(#green)" filter="url(#glow)"/>
-  <path d="M105 72C101 97 82 108 60 108C45 108 32 102 23 91" stroke="url(#red)" stroke-width="11" stroke-linecap="round" filter="url(#glow)"/>
-  <path d="M28 103L21 89L37 87" fill="url(#red)" filter="url(#glow)"/>
-  <path d="M53 50V82" stroke="url(#note)" stroke-width="10" stroke-linecap="round"/>
-  <path d="M53 52L82 45V75" stroke="url(#note)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="46" cy="84" r="10" fill="url(#note)"/>
-  <circle cx="75" cy="77" r="10" fill="url(#note)"/>
+  <g filter="url(#glowCyan)">
+    <path d="M154 404 C272 422 344 347 425 265 C510 179 622 153 731 216" fill="none" stroke="url(#cyan)" stroke-width="116" stroke-linecap="round"/>
+    <path d="M704 118 L900 254 L704 390 Z" fill="url(#cyan)"/>
+  </g>
+  <g filter="url(#softGlow)">
+    <rect x="344" y="444" width="54" height="126" rx="27" fill="url(#bar1)"/>
+    <rect x="427" y="386" width="62" height="244" rx="31" fill="url(#bar1)"/>
+    <rect x="516" y="330" width="68" height="356" rx="34" fill="url(#bar2)"/>
+    <rect x="611" y="395" width="62" height="230" rx="31" fill="url(#bar3)"/>
+    <rect x="700" y="451" width="54" height="120" rx="27" fill="url(#bar3)"/>
+  </g>
+  <g filter="url(#glowPink)">
+    <path d="M858 622 C735 708 620 751 489 713 C392 684 311 612 226 628" fill="none" stroke="url(#pink)" stroke-width="118" stroke-linecap="round"/>
+    <path d="M239 526 L58 645 L242 772 Z" fill="url(#pink)"/>
+  </g>
+  <path d="M180 385 C289 402 350 334 432 252 C521 163 623 153 714 205" fill="none" stroke="#d9fffb" stroke-opacity="0.55" stroke-width="8" stroke-linecap="round"/>
+  <path d="M834 602 C717 684 611 724 497 691 C402 664 322 594 242 610" fill="none" stroke="#fff0ec" stroke-opacity="0.42" stroke-width="8" stroke-linecap="round"/>
 </svg>
