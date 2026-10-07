@@ -424,7 +424,7 @@ async function youtubePlaylistRoute(event) {
 async function youtubeSearchRoute(event) {
   const auth = await googleAuth(event); const q = String(event.queryStringParameters?.q || '').trim().slice(0, 180);
   if (!q) throw new HttpError(400, 'Busca vazia.', 'BAD_QUERY');
-  const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '5', q });
+  const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', q });
   const search = await providerFetch(`${YOUTUBE_API}/search?${params}`, { headers: bearer(auth.accessToken) }, 'google');
   const ids = (search.items || []).map(x => x.id?.videoId).filter(Boolean);
   if (!ids.length) return json(200, { items: [] }, auth.setCookies);

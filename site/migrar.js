@@ -3,6 +3,7 @@
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const store = window.RhyftMigrationStore;
+  const matching = window.RhyftMusicMatching;
 
   const ui = {
     spotifyStatus: $('#spotify-status'), spotifyDetail: $('#spotify-detail'), spotifyConnect: $('#spotify-connect'), spotifyLogout: $('#spotify-logout'),
@@ -10,7 +11,7 @@
     directions: $$('.direction'), label: $('#playlist-label'), input: $('#playlist-input'), name: $('#playlist-name'),
     start: $('#start-migration'), pause: $('#pause-migration'), cancel: $('#cancel-migration'),
     progressPanel: $('#progress-panel'), progressTitle: $('#progress-title'), progressPercent: $('#progress-percent'), progressBar: $('#progress-bar'), progressCount: $('#progress-count'), progressCurrent: $('#progress-current'), log: $('#live-log'),
-    pendingPanel: $('#pending-panel'), pendingList: $('#pending-list'), resultPanel: $('#result-panel'), resultTitle: $('#result-title'), resultSummary: $('#result-summary'), resultLink: $('#result-link'), toast: $('#toast')
+    pendingPanel: $('#pending-panel'), pendingTitle: $('#pending-title'), pendingList: $('#pending-list'), resultPanel: $('#result-panel'), resultTitle: $('#result-title'), resultSummary: $('#result-summary'), resultLink: $('#result-link'), toast: $('#toast')
   };
 
   const state = {
@@ -183,7 +184,7 @@
       status, added: state.added, skipped: state.skipped,
       pending: state.pending.filter(p => !p.resolved).length,
       pendingItems: state.pending.filter(p => !p.resolved), processed: state.processed,
-      inFlight: state.inFlight
+      inFlight: state.inFlight, matcherVersion: matching.VERSION
     });
     try { store.save(state.record); } catch {
       throw new Error('Não foi possível salvar o progresso neste navegador. Libere espaço no armazenamento antes de continuar.');
@@ -279,7 +280,10 @@
         log('✓ Envio confirmado na playlist após uma falha de resposta.', 'ok');
       }
     }
-    entries.forEach(entry => state.processed[sourceKey(entry.source)] = entry.candidate.id);
+    entries.forEach(entry => {
+      state.processed[sourceKey(entry.source)] = entry.candidate.id;
+      resolveSource(entry.source);
+    });
     state.added = state.usedIds.size;
     state.inFlight = [];
     saveProgress();
@@ -295,71 +299,36 @@
     if (!state.running) state.selectedRecord = null;
   }));
 
-  function normalize(value) {
-    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-      .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
-      .replace(/\b(official|oficial|video|audio|lyrics|lyric|visualizer|hd|4k)\b/g, ' ')
-      .replace(/\b(feat|ft|featuring)\.?\s+.*$/g, ' ')
-      .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  }
-
-  function levenshtein(a, b) {
-    a = normalize(a); b = normalize(b);
-    if (!a) return b.length; if (!b) return a.length;
-    const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-    for (let i = 1; i <= a.length; i++) {
-      let left = i, diag = i - 1;
-      for (let j = 1; j <= b.length; j++) {
-        const up = prev[j];
-        const cur = a[i - 1] === b[j - 1] ? diag : Math.min(diag, up, left) + 1;
-        prev[j] = cur; diag = up; left = cur;
-      }
-    }
-    return prev[b.length];
-  }
-
-  function textScore(a, b) {
-    const na = normalize(a), nb = normalize(b);
-    if (!na || !nb) return 0;
-    const lev = 1 - levenshtein(na, nb) / Math.max(na.length, nb.length, 1);
-    const aa = new Set(na.split(' ')), bb = new Set(nb.split(' '));
-    const common = [...aa].filter(x => bb.has(x)).length;
-    const token = common / Math.max(aa.size, bb.size, 1);
-    return Math.max(0, Math.min(1, lev * .58 + token * .42));
-  }
-
-  function durationScore(a, b) {
-    if (!a || !b) return .55;
-    const diff = Math.abs(Number(a) - Number(b));
-    return Math.max(0, 1 - diff / 28);
-  }
-
-  function rankYoutube(track, candidates) {
-    const artist = (track.artists || [])[0] || track.artist || '';
-    return candidates.map(c => {
-      const channel = String(c.channel || '').replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '');
-      const score = textScore(track.name, c.title) * .64 + textScore(artist, channel) * .21 + durationScore(track.duration, c.duration) * .15;
-      return { ...c, score };
-    }).sort((a, b) => b.score - a.score);
-  }
-
-  function rankSpotify(track, candidates) {
-    const artist = (track.artists || [])[0] || track.artist || '';
-    return candidates.map(c => {
-      const candArtist = (c.artists || [])[0] || '';
-      const score = textScore(track.name, c.name) * .56 + textScore(artist, candArtist) * .29 + durationScore(track.duration, c.duration) * .15;
-      return { ...c, score };
-    }).sort((a, b) => b.score - a.score);
-  }
-
   function queryFor(track) {
-    const artist = (track.artists || [])[0] || track.artist || '';
-    return `${track.name || ''} ${artist}`.trim().slice(0, 180);
+    return `${track.name || ''} ${(track.artists || [])[0] || track.artist || ''}`.trim();
+  }
+
+  async function findCandidates(track, kind) {
+    const cached = state.pending.find(item => !item.resolved && sourceKey(item.source) === sourceKey(track));
+    const pool = new Map((cached?.candidates || []).map(candidate => [candidate.id, candidate]));
+    let ranked = matching.rank(track, [...pool.values()], kind);
+    // Reevaluate older pending matches with the new comparator before spending quota.
+    if (ranked[0]?.auto) return ranked;
+    for (const query of matching.queries(track, kind)) {
+      await checkpoint();
+      const found = await api(`/${kind}/search?q=${encodeURIComponent(query)}`);
+      for (const candidate of found.items || []) pool.set(candidate.id, candidate);
+      ranked = matching.rank(track, [...pool.values()], kind);
+      if (ranked[0]?.auto) break;
+    }
+    return ranked;
+  }
+
+  function resolveSource(track) {
+    state.pending.forEach(item => {
+      if (sourceKey(item.source) === sourceKey(track)) item.resolved = true;
+    });
   }
 
   function addPending(source, candidates, kind) {
-    if (state.pending.some(item => !item.resolved && sourceKey(item.source) === sourceKey(source))) return;
-    state.pending.push({ source, candidates: candidates.slice(0, 4), kind, resolved: false });
+    const existing = state.pending.find(item => !item.resolved && sourceKey(item.source) === sourceKey(source));
+    if (existing) existing.candidates = candidates.slice(0, 4);
+    else state.pending.push({ source, candidates: candidates.slice(0, 4), kind, resolved: false });
     saveProgress();
   }
 
@@ -377,17 +346,16 @@
     for (let i = 0; i < total; i++) {
       await checkpoint();
       const track = source.tracks[i];
-      if (state.processed[sourceKey(track)] || state.pending.some(p => !p.resolved && sourceKey(p.source) === sourceKey(track))) {
+      if (state.processed[sourceKey(track)]) {
         progress(i + 1, total, track.name);
         continue;
       }
       progress(i, total, `${track.name} — ${(track.artists || []).join(', ')}`);
       log(`[${i + 1}/${total}] Procurando: ${track.name}`);
       try {
-        const found = await api(`/youtube/search?q=${encodeURIComponent(queryFor(track))}`);
-        const ranked = rankYoutube(track, found.items || []);
+        const ranked = await findCandidates(track, 'youtube');
         const best = ranked[0];
-        if (best && best.score >= .61) {
+        if (best?.auto) {
           await checkpoint();
           await addEntries('youtube', [{ source: track, candidate: best }]);
           log(`  ✓ ${best.title}`, 'ok');
@@ -431,19 +399,19 @@
     for (let i = 0; i < total; i++) {
       await checkpoint();
       const track = source.tracks[i];
-      if (state.processed[sourceKey(track)] || state.pending.some(p => !p.resolved && sourceKey(p.source) === sourceKey(track))) {
+      if (state.processed[sourceKey(track)]) {
         progress(i + 1, total, track.name);
         continue;
       }
       progress(i, total, track.name);
       log(`[${i + 1}/${total}] Procurando: ${track.name}`);
       try {
-        const found = await api(`/spotify/search?q=${encodeURIComponent(queryFor(track))}`);
-        const ranked = rankSpotify(track, found.items || []);
+        const ranked = await findCandidates(track, 'spotify');
         const best = ranked[0];
-        if (best && best.score >= .63) {
+        if (best?.auto) {
           if (state.usedIds.has(best.id)) {
             state.processed[sourceKey(track)] = best.id;
+            resolveSource(track);
             saveProgress();
             log(`  ✓ Já presente: ${best.name}`, 'ok');
           } else if (!queuedIds.has(best.id)) {
@@ -485,10 +453,8 @@
       await addEntries(item.kind, [{ source: item.source, candidate }]);
       item.resolved = true;
       saveProgress();
-      card.classList.add('resolved');
-      card.querySelector('.candidate-list').textContent = '';
-      const done = document.createElement('div'); done.className = 'log-line ok'; done.textContent = `✓ Adicionada: ${candidate.title || candidate.name}`;
-      card.appendChild(done); updateResult();
+      renderPending(); updateResult();
+      showToast(`Adicionada: ${candidate.title || candidate.name}`);
     } catch (error) {
       buttons.forEach(b => b.disabled = false); showToast(error.message, true);
     } finally {
@@ -499,6 +465,7 @@
   function renderPending() {
     const active = state.pending.filter(p => !p.resolved);
     ui.pendingPanel.hidden = active.length === 0;
+    ui.pendingTitle.textContent = active.length === 1 ? '1 faixa precisa de revisão' : `${active.length} faixas precisam de revisão`;
     ui.pendingList.textContent = '';
     active.forEach(item => {
       const card = document.createElement('article'); card.className = 'pending-item';
@@ -510,8 +477,15 @@
         const meta = document.createElement('div');
         const strong = document.createElement('strong'); strong.textContent = candidate.title || candidate.name;
         const span = document.createElement('span');
-        span.textContent = `${candidate.channel || (candidate.artists || []).join(', ')} · confiança ${Math.round(candidate.score * 100)}%`;
+        const duration = candidate.duration ? ` · ${Math.floor(candidate.duration / 60)}:${String(candidate.duration % 60).padStart(2, '0')}` : '';
+        span.textContent = `${candidate.channel || (candidate.artists || []).join(', ')}${duration} · ${candidate.reason || 'Confira esta correspondência'}`;
         meta.append(strong, span);
+        if (candidate.url) {
+          const listen = document.createElement('a');
+          listen.href = candidate.url; listen.target = '_blank'; listen.rel = 'noreferrer';
+          listen.textContent = 'Ouvir antes de escolher'; listen.className = 'candidate-listen';
+          meta.appendChild(listen);
+        }
         const choose = document.createElement('button'); choose.type = 'button'; choose.textContent = 'Escolher';
         choose.addEventListener('click', () => resolvePending(item, candidate, card));
         row.append(meta, choose); list.appendChild(row);
@@ -548,7 +522,8 @@
       saveProgress(state.skipped ? 'interrupted' : 'completed');
       renderPending(); updateResult();
       log(`✓ Processo finalizado: ${state.added} item(ns) adicionado(s).`, 'ok');
-      if (state.pending.length) log(`? ${state.pending.length} item(ns) aguardam sua escolha.`, 'warn');
+      const unresolved = state.pending.filter(item => !item.resolved).length;
+      if (unresolved) log(`? ${unresolved} item(ns) aguardam sua escolha.`, 'warn');
     } catch (error) {
       if (error instanceof Cancelled) {
         ui.progressTitle.textContent = 'Migração cancelada'; log('Migração cancelada. A playlist já criada não foi apagada.', 'warn');

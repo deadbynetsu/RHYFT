@@ -91,3 +91,22 @@ test('inaccessible destinations fail instead of creating a replacement', async (
     headers: {cookie: `g_session=${session}`}, queryStringParameters: {input: 'Playlist1234567890'}});
   assert.equal(result.statusCode, 404);
 });
+
+test('YouTube search requests ten candidates with their recording durations', async () => {
+  const ids = Array.from({length: 10}, (_, i) => `Video12345${i}`);
+  const api = backend(async url => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith('/search')) {
+      assert.equal(parsed.searchParams.get('maxResults'), '10');
+      return response(200, {items: ids.map(id => ({id: {videoId: id}}))});
+    }
+    assert.equal(parsed.searchParams.get('id'), ids.join(','));
+    return response(200, {items: ids.map(id => ({id, snippet: {title: 'Song', channelTitle: 'Artist'}, contentDetails: {duration: 'PT3M2S'}}))});
+  });
+  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const result = await api.handler({path: '/api/youtube/search', httpMethod: 'GET', headers: {cookie: `g_session=${session}`}, queryStringParameters: {q: 'Artist Song'}});
+  assert.equal(result.statusCode, 200);
+  const data = JSON.parse(result.body);
+  assert.equal(data.items.length, 10);
+  assert.equal(data.items[0].duration, 182);
+});

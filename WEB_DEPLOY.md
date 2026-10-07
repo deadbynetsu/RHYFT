@@ -21,6 +21,8 @@ O destino e o progresso são salvos no histórico deste navegador assim que a pl
 
 Antes de continuar, o site consulta as faixas presentes no destino para evitar duplicatas. Migrações do histórico antigo também reutilizam o link de destino salvo. Faixas com erro podem ser tentadas novamente e escolhas manuais pendentes são preservadas ao recarregar a página. Uma playlist removida ou sem acesso interrompe a retomada; o site não cria outra automaticamente.
 
+A busca separa créditos de artistas do título, reconhece canais Topic/VEVO e ignora rótulos como “Official Audio” e “lyrics”. Título, artista, versão e duração determinam a correspondência; covers, remixes, gravações ao vivo e durações incompatíveis ficam para revisão. A busca no YouTube considera até dez resultados por consulta; uma segunda consulta mais específica ocorre somente quando a primeira não encontra uma correspondência clara. Pendências salvas por versões anteriores são reavaliadas ao retomar, aproveitando os candidatos já disponíveis. Cada faixa ainda incerta mostra o motivo e um link para ouvir; opções resolvidas saem da lista.
+
 Leituras que falham temporariamente têm tentativas limitadas. Envios não são repetidos automaticamente: uma falha pode ocorrer depois de a plataforma aceitar a faixa. Nesse caso, o site confere o destino e interrompe se não conseguir confirmar o envio. Cotas e autorizações continuam dependendo das plataformas. Limpar o histórico ou trocar de navegador remove a informação local necessária para localizar o destino.
 
 ## Testes da versão Web
@@ -28,7 +30,7 @@ Leituras que falham temporariamente têm tentativas limitadas. Envios não são 
 Os testes da API usam apenas Node.js 22 ou superior:
 
 ```bash
-node --test tests/web_api.test.cjs
+node --test tests/web_api.test.cjs tests/web_matching.test.cjs
 ```
 
 Os testes da interface executam Chromium com Playwright e respostas simuladas das APIs, sem credenciais ou alterações em playlists reais. Instale as ferramentas fora do checkout:

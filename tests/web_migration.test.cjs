@@ -33,17 +33,21 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   const sourceId = 'Source123456789012345';
   const destId = 'Destination123456789';
   const destUrl = target === 'youtube' ? `https://www.youtube.com/playlist?list=${destId}` : `https://open.spotify.com/playlist/${destId}`;
-  const tracks = [
+  const tracks = options.tracks || [
     {id: 'SourceTrack1234567890', name: 'Horizonte', artists: ['Artista'], duration: 180},
     {id: 'SourceTrack2345678901', name: 'Tempestade', artists: ['Artista'], duration: 180}
   ];
-  const candidates = tracks.map((track, i) => ({id: `Music12345${i}`, title: track.name, name: track.name,
-    channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`}));
+  const candidates = options.candidates || tracks.map((track, i) => ({id: `Music12345${i}`, title: track.name, name: track.name,
+    channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`, url: `https://www.youtube.com/watch?v=Music12345${i}`}));
   const remote = new Set(options.existing ? [candidates[0].id] : []);
-  const stats = {creates: 0, writes: [], searches: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null};
+  const stats = {creates: 0, writes: [], searches: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, weakPrimary: false};
   const historyRecord = {id: 'legacy-history', createdAt: new Date().toISOString(), direction,
     sourceInput: sourceId, destinationName: 'Destino antigo', destinationUrl: destUrl, added: 1, pending: 0, skipped: 1, status: 'completed'};
-  if (options.legacy) await context.addInitScript(({key, record}) => {
+  if (options.legacyPending) {
+    historyRecord.pending = 1;
+    historyRecord.pendingItems = [{source: tracks[0], candidates: [{...candidates[0], score: .51}], kind: target, resolved: false}];
+  }
+  if (options.legacy || options.legacyPending) await context.addInitScript(({key, record}) => {
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify([record]));
   }, {key, record: historyRecord});
   await page.route('**/api/**', async route => {
@@ -64,7 +68,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
     if (url.pathname === `/api/${target}/search`) {
       const query = url.searchParams.get('q'); stats.searches.push(query);
       if (stats.searchGate) await stats.searchGate;
-      if (stats.pendingSearch && query.includes('Horizonte')) return json({items: [{...candidates[0], name: 'Outra música', title: 'Outra música', artists: ['Outro'], channel: 'Outro'}]});
+      if ((stats.pendingSearch || (stats.weakPrimary && !query.includes('"'))) && query.includes('Horizonte')) return json({items: [{...candidates[0], name: 'Outra música', title: 'Outra música', artists: ['Outro'], channel: 'Outro'}]});
       if (stats.transientSearch) {stats.transientSearch = false; return json({error: 'The operation was aborted.', code: 'PROVIDER_TIMEOUT'}, 504);}
       if (stats.failSearch && query.includes('Tempestade')) return json({error: 'The operation was aborted.', code: 'PROVIDER_TIMEOUT'}, 504);
       return json({items: [candidates[query.includes('Tempestade') ? 1 : 0]]});
@@ -241,4 +245,34 @@ test('cancel during a search prevents the next write and preserves the destinati
     assert.equal(f.stats.writes.length, 0);
     assert.deepEqual(f.errors, []);
   } finally {release?.(); await f.context.close();}
+});
+
+
+test('rechecks a previously uncertain Last Fall match without another search or manual click', async () => {
+  const track = {id: 'SourceTrack1234567890', name: 'Last Fall', artists: ['Lil Peep', 'Lil Tracy', 'Horse Head'], duration: 180};
+  const candidate = {id: 'Music123450', title: 'Lil Peep w/ Lil Tracy & Horse Head - Last Fall (Official Audio)', channel: 'Lil Peep', duration: 182};
+  const f = await fixture('spotify-youtube', {tracks: [track], candidates: [candidate], legacyPending: true});
+  try {
+    await f.start();
+    assert.equal(f.stats.creates, 0);
+    assert.equal(f.stats.searches.length, 0);
+    assert.deepEqual(f.stats.writes.flat(), [candidate.id]);
+    assert.equal((await f.history())[0].pending, 0);
+    assert.deepEqual((await f.history())[0].pendingItems, []);
+    assert.equal((await f.history())[0].matcherVersion, 2);
+    assert.equal(await f.page.locator('#pending-panel').isHidden(), true);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('uses a targeted second search only when the first result is weak', async () => {
+  const f = await fixture();
+  try {
+    f.stats.weakPrimary = true;
+    await f.start();
+    assert.deepEqual(f.stats.searches, ['Artista Horizonte', '"Artista" "Horizonte"', 'Artista Tempestade']);
+    assert.equal((await f.history())[0].pending, 0);
+    assert.equal(f.remote.size, 2);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
 });

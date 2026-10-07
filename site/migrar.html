@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/history.css">
   <script src="/migration-store.js" defer></script>
+  <script src="/music-matching.js" defer></script>
   <script src="/migrar.js" defer></script>
   <script src="/history.js" defer></script>
 </head>
@@ -95,7 +96,7 @@
     </section>
 
     <section class="pending-panel" id="pending-panel" hidden>
-      <div class="section-heading left"><div class="eyebrow">PRECISA DA SUA ESCOLHA</div><h2>Algumas faixas ficaram incertas.</h2><p>Escolha a versão correta ou ignore. Nada é adicionado automaticamente quando a confiança está baixa.</p></div>
+      <div class="section-heading left"><div class="eyebrow">PRECISA DA SUA ESCOLHA</div><h2 id="pending-title">Faixas para revisar</h2><p>Confira o título, o artista e a duração. Você pode ouvir cada opção antes de escolher; as faixas resolvidas saem desta lista.</p></div>
       <div id="pending-list" class="pending-list"></div>
     </section>
 
