@@ -1,0 +1,56 @@
+#spotify-setup {
+  box-sizing: border-box;
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 40px);
+  margin: auto;
+  padding: 28px;
+  overflow: auto;
+  border: 1px solid #2c333d;
+  border-radius: 22px;
+  background: #11151c;
+  color: #f0f3f5;
+  font: 14px/1.55 system-ui, sans-serif;
+  box-shadow: 0 24px 80px #0009;
+}
+#spotify-setup::backdrop { background: #030609c9; backdrop-filter: blur(5px); }
+#spotify-setup [hidden] { display: none !important; }
+#spotify-setup .spotify-setup-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+#spotify-setup .spotify-setup-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: #1ed76020; color: #1ed760; font-size: 26px; }
+#spotify-setup-close { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: #ffffff08; color: #aeb6c0; font: 24px/1 system-ui, sans-serif; cursor: pointer; }
+#spotify-setup-close:hover { background: #ffffff15; color: #fff; }
+#spotify-setup h2 { font-size: 25px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -.6px; }
+#spotify-setup h3 { font-size: 19px; margin: 0 0 8px; color: #f0f3f5; }
+#spotify-setup p { margin: 0 0 20px; color: #aeb7c2; font-size: 14px; line-height: 1.6; }
+#spotify-setup strong { color: #e8edf2; }
+#spotify-setup .btn { box-sizing: border-box; display: flex; justify-content: center; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 12px 16px; border: 1px solid #2c333d; border-radius: 12px; font: 600 14px/1.4 system-ui, sans-serif; text-decoration: none; cursor: pointer; }
+#spotify-setup .btn-primary { background: #1ed760; border-color: #1ed760; color: #061b0e; }
+#spotify-setup .btn-primary:hover { background: #39e577; transform: none; }
+#spotify-setup .btn-secondary { background: #ffffff04; color: #d8dfe7; }
+#spotify-setup .btn-secondary:hover { background: #ffffff09; transform: none; }
+#spotify-welcome .btn + .btn { margin-top: 10px; }
+#spotify-setup .spotify-shared-option { display: grid; justify-items: center; gap: 6px; margin-top: 22px; padding-top: 19px; border-top: 1px solid #252d37; }
+#spotify-setup .spotify-shared-option a { color: #c4cdd8; font-size: 13px; text-decoration: underline; text-underline-offset: 4px; }
+#spotify-setup .spotify-shared-option small { color: #7f8b99; font-size: 11px; }
+#spotify-setup .spotify-step-progress { display: flex; justify-content: space-between; align-items: center; margin-bottom: 19px; color: #8e9aa9; font-size: 12px; }
+#spotify-setup .spotify-step-dots { display: flex; gap: 5px; }
+#spotify-setup .spotify-step-dots i { width: 22px; height: 3px; border-radius: 3px; background: #303945; }
+#spotify-setup .spotify-step-dots i.active { background: #1ed760; }
+#spotify-setup .spotify-dashboard-link { display: block; margin: -5px 0 18px; color: #1ed760; font-size: 14px; text-decoration: underline; text-underline-offset: 4px; }
+#spotify-setup details { margin: 14px 0 20px; background: #ffffff03; border: 1px solid #252d37; border-radius: 10px; padding: 10px 12px; }
+#spotify-setup details summary { color: #b2bdca; font-size: 12px; cursor: pointer; }
+#spotify-setup details p { margin: 10px 0 0; font-size: 12px; }
+#spotify-setup input { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #34404e; border-radius: 10px; background: #090d13; color: #eef2f6; font: 13px/1.5 ui-monospace, monospace; }
+#spotify-setup input:focus-visible { outline: 2px solid #1ed760; outline-offset: 2px; }
+#spotify-setup button:focus-visible, #spotify-setup a:focus-visible, #spotify-setup summary:focus-visible { outline: 2px solid #1ed760; outline-offset: 3px; }
+#spotify-setup .spotify-redirect { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; }
+#spotify-setup .spotify-redirect input { min-width: 0; font-size: 11px; }
+#spotify-copy-redirect { flex-shrink: 0; padding: 11px; border: 1px solid #34404e; border-radius: 10px; background: #19212b; color: #dfe6ee; font-size: 12px; cursor: pointer; }
+#spotify-setup .spotify-field-label { display: block; margin-bottom: 7px; color: #c5cfdb; font-size: 12px; }
+#spotify-setup .spotify-field-note { display: block; color: #8390a1; font-size: 11px; margin: 9px 0 20px; }
+#spotify-setup .spotify-text-button { display: block; margin: 16px auto 0; padding: 0; background: none; border: 0; color: #97a4b5; font: 12px/1.5 system-ui, sans-serif; cursor: pointer; }
+#spotify-setup .spotify-text-button:hover { color: #f0f3f5; }
+#spotify-setup .spotify-setup-error { background: #f17d6c0b; border: 1px solid #f17d6c30; border-radius: 10px; color: #f2b3aa; font-size: 12px; padding: 11px 12px; margin-bottom: 15px; }
+@media (max-width: 480px) {
+  #spotify-setup { padding: 22px; max-height: calc(100dvh - 24px); width: calc(100% - 24px); border-radius: 18px; }
+  #spotify-setup h2 { font-size: 23px; }
+}

@@ -291,14 +291,15 @@ test('Spotify connect opens a tutorial, rejects invalid input and remembers a pe
   try {
     await f.page.locator('#spotify-connect').click();
     assert.equal(await f.page.locator('#spotify-setup').isVisible(), true);
-    assert.equal(await f.page.locator('#spotify-tutorial').getAttribute('open'), '');
+    assert.equal(await f.page.locator('#spotify-tutorial').isHidden(), true);
+    await f.page.locator('#spotify-have-id').click();
     assert.equal(await f.page.locator('#spotify-shared-option').isHidden(), true);
     await f.page.locator('#spotify-client-id').fill('not-a-client-id');
-    await f.page.getByRole('button', {name: 'Conectar com meu Client ID'}).click();
+    await f.page.getByRole('button', {name: 'Conectar ao Spotify'}).click();
     assert.match(await f.page.locator('#spotify-setup-error').innerText(), /32 caracteres/);
     assert.equal(f.stats.loginQueries.length, 0);
     await f.page.locator('#spotify-client-id').fill(clientId);
-    await f.page.getByRole('button', {name: 'Conectar com meu Client ID'}).click();
+    await f.page.getByRole('button', {name: 'Conectar ao Spotify'}).click();
     await f.page.waitForURL(/api\/spotify\/start/);
     assert.deepEqual(f.stats.loginQueries, [clientId]);
     await f.page.goto(`${baseUrl}/migrar.html`);
@@ -327,6 +328,8 @@ test('the tutorial copies the canonical callback URI from server configuration',
       Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async value => window.copiedRedirect = value}});
     });
     await f.page.locator('#spotify-connect').click();
+    await f.page.locator('#spotify-setup-begin').click();
+    await f.page.locator('#spotify-created-app').click();
     assert.equal(await f.page.locator('#spotify-redirect').inputValue(), callbackUrl);
     await f.page.locator('#spotify-copy-redirect').click();
     await f.page.getByRole('button', {name: 'Copiado', exact: true}).waitFor();
@@ -341,8 +344,53 @@ test('a development-mode rejection opens actionable Spotify setup', async () => 
     f.stats.forbiddenSource = true;
     await f.page.locator('#start-migration').click();
     await f.page.locator('#spotify-setup').waitFor({state: 'visible'});
-    assert.match(await f.page.locator('#spotify-setup-error').innerText(), /User Management/);
+    assert.match(await f.page.locator('#spotify-setup-error').innerText(), /Spotify ainda não autorizou/);
+    await f.page.locator('#spotify-access-help summary').click();
+    assert.match(await f.page.locator('#spotify-access-help').innerText(), /User Management/);
     assert.equal(f.stats.creates, 0);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
+
+
+for (const viewport of [{name: 'desktop', width: 1280, height: 720}, {name: 'mobile', width: 390, height: 844}]) {
+  test(`Spotify connection stays compact and styled on ${viewport.name}, with one tutorial step at a time`, async () => {
+    const f = await fixture();
+    try {
+      await f.page.setViewportSize({width: viewport.width, height: viewport.height});
+      await f.page.locator('#spotify-connect').click();
+      const box = await f.page.locator('#spotify-setup').boundingBox();
+      assert.ok(box.width <= 440 && box.width < viewport.width);
+      assert.ok(box.height < 440 && box.y >= 0 && box.y + box.height <= viewport.height);
+      const style = await f.page.locator('#spotify-setup').evaluate(element => ({
+        background: getComputedStyle(element).backgroundColor,
+        radius: parseFloat(getComputedStyle(element).borderRadius),
+        overflow: element.scrollWidth > element.clientWidth
+      }));
+      assert.equal(style.background, 'rgb(17, 21, 28)');
+      assert.ok(style.radius >= 18);
+      assert.equal(style.overflow, false);
+      assert.equal(await f.page.locator('#spotify-personal-form').isHidden(), true);
+      if (process.env.RHYFT_SCREENSHOTS) {
+        fs.mkdirSync(process.env.RHYFT_SCREENSHOTS, {recursive: true});
+        await f.page.screenshot({path: path.join(process.env.RHYFT_SCREENSHOTS, `spotify-${viewport.name}-welcome.png`)});
+      }
+      await f.page.locator('#spotify-setup-begin').click();
+      assert.equal(await f.page.locator('#spotify-step-create').isVisible(), true);
+      assert.equal(await f.page.locator('#spotify-step-redirect').isHidden(), true);
+      assert.equal(await f.page.locator('#spotify-step-client').isHidden(), true);
+      await f.page.locator('#spotify-created-app').click();
+      assert.equal(await f.page.locator('#spotify-step-create').isHidden(), true);
+      assert.equal(await f.page.locator('#spotify-step-label').innerText(), 'Passo 2 de 3');
+      await f.page.locator('#spotify-saved-redirect').click();
+      assert.equal(await f.page.locator('#spotify-step-client').isVisible(), true);
+      assert.equal(await f.page.locator('#spotify-step-redirect').isHidden(), true);
+      assert.equal(await f.page.locator('#spotify-step-label').innerText(), 'Passo 3 de 3');
+      await f.page.locator('#spotify-step-back').click();
+      assert.equal(await f.page.locator('#spotify-step-redirect').isVisible(), true);
+      await f.page.locator('#spotify-setup-close').click();
+      assert.equal(await f.page.locator('#spotify-setup').isVisible(), false);
+      assert.deepEqual(f.errors, []);
+    } finally {await f.context.close();}
+  });
+}
