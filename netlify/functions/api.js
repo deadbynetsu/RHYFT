@@ -154,10 +154,31 @@ function providerMessage(provider, status, data) {
 }
 
 async function providerFetch(url, options, provider) {
-  const response = await fetch(url, options);
-  const data = await readJson(response);
-  if (!response.ok) throw new HttpError(response.status, providerMessage(provider, response.status, data), `${provider.toUpperCase()}_${response.status}`);
-  return data;
+  // Only reads can be repeated safely. A failed POST may already have been applied.
+  const attempts = (options?.method || 'GET').toUpperCase() === 'GET' ? 2 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      const data = await readJson(response);
+      if (!response.ok) throw new HttpError(response.status, providerMessage(provider, response.status, data), `${provider.toUpperCase()}_${response.status}`);
+      return data;
+    } catch (error) {
+      const temporary = !(error instanceof HttpError) || [500, 502, 503, 504].includes(error.status);
+      if (!temporary) throw error;
+      if (attempt + 1 === attempts) {
+        if (error instanceof HttpError) throw error;
+        const timeout = controller.signal.aborted || ['AbortError', 'TimeoutError'].includes(error.name);
+        throw new HttpError(timeout ? 504 : 502,
+          timeout ? 'A plataforma demorou para responder. Retome a migração para tentar novamente.' : 'A conexão com a plataforma falhou temporariamente. Retome a migração para tentar novamente.',
+          timeout ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE');
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
 }
 
 function randomString(bytes = 32) { return crypto.randomBytes(bytes).toString('base64url'); }
@@ -427,6 +448,42 @@ async function youtubeAddItemRoute(event) {
   return json(201, { ok: true, id: data.id || null }, auth.setCookies);
 }
 
+// Read the destination in pages without fetching music metadata or truncating IDs.
+// The browser uses these IDs to reconcile uncertain writes and avoid duplicates.
+async function destinationStateRoute(event, provider) {
+  const query = event.queryStringParameters || {};
+  const isSpotify = provider === 'spotify';
+  const auth = isSpotify ? await spotifyAuth(event) : await googleAuth(event);
+  const id = isSpotify ? spotifyId(query.input) : youtubePlaylistId(query.input);
+  const headers = { headers: bearer(auth.accessToken) };
+  let name, ids, nextPage = null;
+  if (isSpotify) {
+    const offset = query.page === undefined ? 0 : Number(query.page);
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, 'Página inválida.', 'BAD_PAGE');
+    if (!offset) {
+      const info = await providerFetch(`${SPOTIFY_API}/playlists/${id}`, headers, 'spotify');
+      name = info.name;
+    }
+    const data = await providerFetch(`${SPOTIFY_API}/playlists/${id}/items?limit=50&offset=${offset}`, headers, 'spotify');
+    const items = data.items || [];
+    ids = items.map(entry => (entry.item || entry.track || entry)?.id).filter(Boolean);
+    if (data.next && items.length) nextPage = String(offset + items.length);
+  } else {
+    if (!query.page) {
+      const info = await providerFetch(`${YOUTUBE_API}/playlists?part=snippet&id=${encodeURIComponent(id)}&maxResults=1`, headers, 'google');
+      if (!info.items?.[0]) throw new HttpError(404, 'Playlist do YouTube não encontrada ou não acessível.', 'NOT_FOUND');
+      name = info.items[0].snippet?.title;
+    }
+    const params = new URLSearchParams({ part: 'contentDetails', playlistId: id, maxResults: '50' });
+    if (query.page) params.set('pageToken', query.page);
+    const data = await providerFetch(`${YOUTUBE_API}/playlistItems?${params}`, headers, 'google');
+    ids = (data.items || []).map(item => item.contentDetails?.videoId).filter(Boolean);
+    nextPage = data.nextPageToken || null;
+  }
+  const url = isSpotify ? `https://open.spotify.com/playlist/${id}` : `https://www.youtube.com/playlist?list=${id}`;
+  return json(200, { id, name, url, ids, nextPage }, auth.setCookies);
+}
+
 exports.handler = async (event) => {
   try {
     const route = routeOf(event.path), method = event.httpMethod || 'GET';
@@ -438,10 +495,12 @@ exports.handler = async (event) => {
     if (route === 'google/callback' && method === 'GET') return await googleCallback(event);
     if (route === 'logout' && method === 'POST') return await logoutRoute(event);
     if (route === 'spotify/playlist' && method === 'GET') return await spotifyPlaylistRoute(event);
+    if (route === 'spotify/playlist/state' && method === 'GET') return await destinationStateRoute(event, 'spotify');
     if (route === 'spotify/search' && method === 'GET') return await spotifySearchRoute(event);
     if (route === 'spotify/playlist' && method === 'POST') return await spotifyCreateRoute(event);
     if (route === 'spotify/playlist/items' && method === 'POST') return await spotifyAddItemsRoute(event);
     if (route === 'youtube/playlist' && method === 'GET') return await youtubePlaylistRoute(event);
+    if (route === 'youtube/playlist/state' && method === 'GET') return await destinationStateRoute(event, 'youtube');
     if (route === 'youtube/search' && method === 'GET') return await youtubeSearchRoute(event);
     if (route === 'youtube/playlist' && method === 'POST') return await youtubeCreateRoute(event);
     if (route === 'youtube/playlist/item' && method === 'POST') return await youtubeAddItemRoute(event);

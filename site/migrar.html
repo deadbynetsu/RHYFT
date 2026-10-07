@@ -9,6 +9,7 @@
   <link rel="icon" href="/brand.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/history.css">
+  <script src="/migration-store.js" defer></script>
   <script src="/migrar.js" defer></script>
   <script src="/history.js" defer></script>
 </head>
@@ -33,7 +34,7 @@
         <div>
           <small>HISTÓRICO LOCAL</small>
           <h2>Suas migrações recentes</h2>
-          <p>Veja resultados anteriores, abra playlists prontas ou reutilize os dados de uma migração.</p>
+          <p>Abra playlists prontas ou retome uma migração na mesma playlist de destino.</p>
         </div>
         <div class="history-head-actions">
           <button class="btn btn-small btn-secondary" id="history-export" type="button">Exportar JSON</button>
@@ -75,9 +76,9 @@
       <div class="migrate-form">
         <label for="playlist-input" id="playlist-label">Link ou ID da playlist do Spotify</label>
         <div class="input-wrap"><input id="playlist-input" autocomplete="off" placeholder="https://open.spotify.com/playlist/…"><span class="input-icon">↗</span></div>
-        <label for="playlist-name">Nome da nova playlist</label>
+        <label for="playlist-name">Nome da playlist de destino</label>
         <input id="playlist-name" maxlength="100" placeholder="Minha Playlist Importada">
-        <div class="form-note"><span>🔒</span><p>As senhas nunca passam pelo RHYFT. O acesso é feito por OAuth e as sessões Web ficam em cookies HttpOnly criptografados.</p></div>
+        <div class="form-note"><span>🔒</span><p>As senhas nunca passam pelo RHYFT. O acesso é feito por OAuth e as sessões Web ficam em cookies HttpOnly criptografados. Ao usar a mesma origem, a migração retoma na playlist salva neste navegador e confere as faixas já presentes.</p></div>
         <div class="migration-actions">
           <button class="btn btn-primary btn-large" id="start-migration">▶ Iniciar migração</button>
           <button class="btn btn-secondary" id="pause-migration" disabled>Ⅱ Pausar</button>
@@ -99,7 +100,7 @@
     </section>
 
     <section class="result-panel" id="result-panel" hidden>
-      <div class="result-icon">✓</div><div><small>MIGRAÇÃO FINALIZADA</small><h2 id="result-title">Playlist criada</h2><p id="result-summary"></p></div><a class="btn btn-primary" id="result-link" href="#" target="_blank" rel="noreferrer">Abrir playlist</a>
+      <div class="result-icon">♪</div><div><small>PLAYLIST DE DESTINO</small><h2 id="result-title">Playlist criada</h2><p id="result-summary"></p></div><a class="btn btn-primary" id="result-link" href="#" target="_blank" rel="noreferrer">Abrir playlist</a>
     </section>
 
     <aside class="quota-note"><strong>Sobre limites das plataformas</strong><p>A migração Web usa as APIs oficiais. Google e Spotify aplicam cotas e limites de uso; se uma cota for atingida, o app informa o motivo e você pode tentar mais tarde. As versões Windows e Android continuam disponíveis como alternativa.</p></aside>

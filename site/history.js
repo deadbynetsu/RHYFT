@@ -15,10 +15,6 @@
     clear: $('#history-clear'),
     export: $('#history-export'),
     resultPanel: $('#result-panel'),
-    resultTitle: $('#result-title'),
-    resultSummary: $('#result-summary'),
-    resultLink: $('#result-link'),
-    progressTitle: $('#progress-title'),
     sourceInput: $('#playlist-input'),
     playlistName: $('#playlist-name'),
     migrator: $('.migrator-panel')
@@ -27,7 +23,6 @@
   if (!ui.toggle || !ui.panel || !ui.list || !ui.resultPanel) return;
 
   const state = {
-    currentRecordId: null,
     filter: 'all',
     query: ''
   };
@@ -51,86 +46,18 @@
     }
   }
 
-  function makeId() {
-    if (crypto?.randomUUID) return crypto.randomUUID();
-    return `rhyft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }
-
   function directionInfo(direction) {
-    if (direction === 'youtube-spotify') {
-      return { label: 'YouTube Music → Spotify', from: 'YouTube Music', to: 'Spotify', cls: 'yt-sp' };
-    }
-    return { label: 'Spotify → YouTube Music', from: 'Spotify', to: 'YouTube Music', cls: 'sp-yt' };
-  }
-
-  function currentDirection() {
-    return $('.direction.active')?.dataset.direction || 'spotify-youtube';
-  }
-
-  function statusFromProgress() {
-    const text = (ui.progressTitle?.textContent || '').toLowerCase();
-    if (text.includes('cancelada')) return 'cancelled';
-    if (text.includes('interrompida')) return 'interrupted';
-    return 'completed';
+    return direction === 'youtube-spotify'
+      ? { label: 'YouTube Music → Spotify', to: 'Spotify', cls: 'yt-sp' }
+      : { label: 'Spotify → YouTube Music', to: 'YouTube Music', cls: 'sp-yt' };
   }
 
   function statusLabel(status, pending = 0) {
+    if (status === 'running') return 'Em andamento';
     if (status === 'cancelled') return 'Cancelada';
     if (status === 'interrupted') return 'Interrompida';
     if (pending > 0) return 'Revisão pendente';
     return 'Concluída';
-  }
-
-  function parseSummary() {
-    const text = ui.resultSummary?.textContent || '';
-    const numbers = [...text.matchAll(/(\d+)/g)].map(match => Number(match[1]));
-    return {
-      added: numbers[0] || 0,
-      pending: numbers[1] || 0,
-      skipped: numbers[2] || 0
-    };
-  }
-
-  function captureResult() {
-    if (ui.resultPanel.hidden) return;
-    const href = ui.resultLink?.getAttribute('href') || '';
-    const name = (ui.resultTitle?.textContent || ui.playlistName?.value || 'Playlist criada').trim();
-    if (!href || href === '#') return;
-
-    const stats = parseSummary();
-    const now = new Date().toISOString();
-    const items = loadHistory();
-    let record = state.currentRecordId ? items.find(item => item.id === state.currentRecordId) : null;
-
-    if (!record) {
-      record = {
-        id: makeId(),
-        createdAt: now,
-        updatedAt: now,
-        direction: currentDirection(),
-        sourceInput: ui.sourceInput?.value?.trim() || '',
-        destinationName: name,
-        destinationUrl: href,
-        status: statusFromProgress(),
-        added: stats.added,
-        pending: stats.pending,
-        skipped: stats.skipped
-      };
-      state.currentRecordId = record.id;
-      items.unshift(record);
-    } else {
-      record.updatedAt = now;
-      record.destinationName = name;
-      record.destinationUrl = href;
-      record.status = statusFromProgress();
-      record.added = stats.added;
-      record.pending = stats.pending;
-      record.skipped = stats.skipped;
-      record.sourceInput = record.sourceInput || ui.sourceInput?.value?.trim() || '';
-    }
-
-    writeHistory(items);
-    renderHistory();
   }
 
   function formatDate(value) {
@@ -160,15 +87,16 @@
   function removeItem(id) {
     const items = loadHistory().filter(item => item.id !== id);
     writeHistory(items);
-    if (state.currentRecordId === id) state.currentRecordId = null;
     renderHistory();
   }
 
   function repeatItem(item) {
+    if ($('#start-migration')?.disabled) return;
     const target = $(`.direction[data-direction="${item.direction}"]`);
     if (target && !target.disabled) target.click();
     if (ui.sourceInput) ui.sourceInput.value = item.sourceInput || '';
     if (ui.playlistName) ui.playlistName.value = item.destinationName || '';
+    document.dispatchEvent(new CustomEvent('rhyft:resume', { detail: item }));
     closeHistory();
     ui.migrator?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     ui.sourceInput?.focus({ preventScroll: true });
@@ -255,7 +183,7 @@
       const repeat = document.createElement('button');
       repeat.className = 'btn btn-small btn-secondary';
       repeat.type = 'button';
-      repeat.textContent = 'Usar novamente';
+      repeat.textContent = 'Retomar / atualizar';
       repeat.addEventListener('click', () => repeatItem(item));
       const remove = document.createElement('button');
       remove.className = 'history-delete';
@@ -304,25 +232,12 @@
     if (!loadHistory().length) return;
     if (!confirm('Apagar todo o histórico de migrações salvo neste navegador?')) return;
     localStorage.removeItem(STORAGE_KEY);
-    state.currentRecordId = null;
     renderHistory();
   });
 
   ui.export?.addEventListener('click', exportHistory);
 
-  const resultObserver = new MutationObserver(() => {
-    if (ui.resultPanel.hidden) {
-      state.currentRecordId = null;
-      return;
-    }
-    queueMicrotask(captureResult);
-  });
-
-  resultObserver.observe(ui.resultPanel, { attributes: true, attributeFilter: ['hidden'] });
-  if (ui.resultSummary) resultObserver.observe(ui.resultSummary, { childList: true, characterData: true, subtree: true });
-  if (ui.resultTitle) resultObserver.observe(ui.resultTitle, { childList: true, characterData: true, subtree: true });
-  if (ui.resultLink) resultObserver.observe(ui.resultLink, { attributes: true, attributeFilter: ['href'] });
-  if (ui.progressTitle) resultObserver.observe(ui.progressTitle, { childList: true, characterData: true, subtree: true });
+  document.addEventListener('rhyft:history-updated', renderHistory);
 
   renderHistory();
 })();

@@ -15,6 +15,32 @@ O repositório agora contém um site completo em `site/` e uma API serverless em
 - Resultados de baixa confiança ficam para escolha manual.
 - Sem banco de dados obrigatório.
 
+## Retomar uma migração Web
+
+O destino e o progresso são salvos no histórico deste navegador assim que a playlist é criada, e atualizados a cada envio confirmado. Use **Retomar / atualizar** no histórico ou inicie novamente com a mesma playlist de origem e o mesmo sentido. Links do Spotify, URIs e IDs equivalentes identificam a mesma origem; links do YouTube e YouTube Music também.
+
+Antes de continuar, o site consulta as faixas presentes no destino para evitar duplicatas. Migrações do histórico antigo também reutilizam o link de destino salvo. Faixas com erro podem ser tentadas novamente e escolhas manuais pendentes são preservadas ao recarregar a página. Uma playlist removida ou sem acesso interrompe a retomada; o site não cria outra automaticamente.
+
+Leituras que falham temporariamente têm tentativas limitadas. Envios não são repetidos automaticamente: uma falha pode ocorrer depois de a plataforma aceitar a faixa. Nesse caso, o site confere o destino e interrompe se não conseguir confirmar o envio. Cotas e autorizações continuam dependendo das plataformas. Limpar o histórico ou trocar de navegador remove a informação local necessária para localizar o destino.
+
+## Testes da versão Web
+
+Os testes da API usam apenas Node.js 22 ou superior:
+
+```bash
+node --test tests/web_api.test.cjs
+```
+
+Os testes da interface executam Chromium com Playwright e respostas simuladas das APIs, sem credenciais ou alterações em playlists reais. Instale as ferramentas fora do checkout:
+
+```bash
+npm install --prefix /tmp/rhyft-web-tests playwright@1.62.1
+/tmp/rhyft-web-tests/node_modules/.bin/playwright install chromium
+NODE_PATH=/tmp/rhyft-web-tests/node_modules node --test tests/web_migration.test.cjs
+```
+
+Se Chromium já estiver instalado, defina `CHROMIUM_PATH` para seu executável e omita o download do navegador. Os testes cobrem os dois sentidos, retomada pelo histórico antigo e por links equivalentes, recarregamento, falhas temporárias, respostas de escrita perdidas, revisão manual e cancelamento.
+
 ## 1. Publicar no Netlify
 
 Importe este repositório no Netlify. O `netlify.toml` já configura:
