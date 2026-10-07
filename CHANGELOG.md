@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.1
+
+Hotfix de estabilidade do primeiro acesso no Windows. O seletor de idioma agora roda antes da criação da janela principal e é completamente encerrado antes do RHYFT abrir, eliminando o caso em que a primeira execução fechava a interface e deixava o processo preso em segundo plano.
+
+Também foi adicionado um teste de regressão que conclui o onboarding e confirma a abertura da janela principal no mesmo processo.
+
+Veja as [notas completas da v1.5.1](releases/v1.5.1.md).
+
 ## 1.5.0
 
 Consolida o rebranding RHYFT, as melhorias de Windows/Android/Web e da comunidade acumuladas desde a v1.4.0, além do onboarding em dez idiomas e da publicação conjunta protegida por testes e builds.
