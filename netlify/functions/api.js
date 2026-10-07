@@ -362,10 +362,34 @@ async function refreshGoogle(session) {
   try {
     data = await providerFetch(GOOGLE_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }, 'google');
   } catch (error) {
-    if (error.details?.cause !== 'rate-limit' && [400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Google. Conecte novamente.', 'AUTH_REQUIRED', error.details);
+    if (!['quota', 'rate-limit'].includes(error.details?.cause) && [400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Google. Conecte novamente.', 'AUTH_REQUIRED', error.details);
     throw error;
   }
-  return { ...session, ...data, refresh_token: session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
+  const current = { ...session, ...data, refresh_token: session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
+  // Older cookies could contain an access token and refresh token from different
+  // accounts. Never trust the saved identity after obtaining a new access token.
+  let channel;
+  try {
+    const channels = await providerFetch(`${YOUTUBE_API}/channels?part=snippet&mine=true&maxResults=1`, { headers: bearer(current.access_token) }, 'google');
+    channel = channels.items?.[0];
+  } catch (error) {
+    if (error.status === 401) throw new HttpError(401, 'Não consegui verificar a conta do YouTube após renovar a sessão. Conecte o Google / YouTube novamente.', 'AUTH_REQUIRED', error.details);
+    // A known account must be positively verified; quota/connection failures
+    // retain their real diagnostics and cannot silently stamp the old identity.
+    if (session.channel_id) throw error;
+  }
+  if (session.channel_id && channel?.id !== session.channel_id) {
+    const mismatch = !!channel?.id;
+    const message = mismatch
+      ? 'A sessão antiga do YouTube contém credenciais de contas diferentes. Conecte o Google / YouTube novamente escolhendo a conta desejada.'
+      : 'Não consegui confirmar o canal do YouTube após renovar a sessão. Conecte o Google / YouTube novamente.';
+    throw new HttpError(401, message, 'AUTH_REQUIRED', { provider: 'youtube', operation: 'account', method: 'GET', cause: mismatch ? 'account-mismatch' : 'auth' });
+  }
+  if (channel?.id) {
+    current.channel_id = channel.id;
+    current.name = channel.snippet?.title || current.name;
+  }
+  return current;
 }
 
 async function googleAuth(event, optional = false) {
@@ -374,20 +398,29 @@ async function googleAuth(event, optional = false) {
     if (optional) return null;
     throw new HttpError(401, 'Google / YouTube não conectado.', 'AUTH_REQUIRED');
   }
-  let current = session, setCookies = [];
+  let current = session, setCookies = [], identityChecked = false;
   if (Number(current.expires_at || 0) < Date.now() + 90000) {
     try {
       current = await refreshGoogle(current);
+      identityChecked = true;
       setCookies.push(cookie('g_session', seal(current), 60 * 60 * 24 * 30));
     } catch (error) {
-      if (optional) return null;
+      if (optional && error instanceof HttpError && error.status === 401 && error.code === 'AUTH_REQUIRED') return null;
       throw error;
     }
   }
-  return { accessToken: current.access_token, session: current, setCookies };
+  return { accessToken: current.access_token, session: current, setCookies, identityChecked };
 }
 
 function bearer(token) { return { Authorization: `Bearer ${token}` }; }
+
+function assertExpectedAccount(body, auth, provider, operation) {
+  if (!body.expectedAccountId) return;
+  const actual = provider === 'youtube' ? auth.session.channel_id : auth.session.user_id;
+  if (body.expectedAccountId !== actual) {
+    throw new HttpError(409, 'A conta conectada mudou durante a migração. Atualize a página e inicie novamente com a conta desejada.', 'ACCOUNT_CHANGED', { provider, operation, method: 'POST', cause: 'account-changed' });
+  }
+}
 
 function spotifyClientId(value) {
   const id = String(value || '').trim();
@@ -450,14 +483,18 @@ async function googleCallback(event) {
   const response = await fetch(GOOGLE_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   const token = await readJson(response);
   if (!response.ok || !token.access_token) return redirect(`${returnTo}?auth_error=${encodeURIComponent('O Google recusou a autorização. Tente novamente.')}`, [clearCookie('g_oauth')]);
-  let name = 'Conta Google / YouTube';
+  let name = 'Conta Google / YouTube', channelId = null;
   try {
     const channels = await providerFetch(`${YOUTUBE_API}/channels?part=snippet&mine=true&maxResults=1`, { headers: bearer(token.access_token) }, 'google');
+    channelId = channels.items?.[0]?.id || null;
     name = channels.items?.[0]?.snippet?.title || name;
   } catch {}
   const previous = unseal(parseCookies(event).g_session);
-  const session = { ...token, refresh_token: token.refresh_token || previous?.refresh_token, name, expires_at: Date.now() + Number(token.expires_in || 3600) * 1000 };
-  if (!session.refresh_token) return redirect(`${returnTo}?auth_error=${encodeURIComponent('O Google não forneceu acesso offline. Desconecte o app na Conta Google e conecte novamente.')}`, [clearCookie('g_oauth')]);
+  // An earlier refresh token belongs to its original account, not whichever
+  // Google account the user selected in this authorization attempt.
+  const sameChannel = channelId && previous?.channel_id === channelId;
+  const session = { ...token, refresh_token: token.refresh_token || (sameChannel ? previous?.refresh_token : undefined), channel_id: channelId, name, expires_at: Date.now() + Number(token.expires_in || 3600) * 1000 };
+  if (!session.refresh_token) return redirect(`${returnTo}?auth_error=${encodeURIComponent('O Google não forneceu acesso offline para esta conta. Remova o acesso do RHYFT nas permissões da Conta Google e conecte novamente escolhendo a conta desejada.')}`, [clearCookie('g_session'), clearCookie('g_oauth')]);
   return redirect(`${returnTo}?auth=google-ok`, [cookie('g_session', seal(session), 60 * 60 * 24 * 30), clearCookie('g_oauth')]);
 }
 
@@ -468,7 +505,23 @@ async function sessionRoute(event) {
   const cookies = [];
   const sp = await spotifyAuth(event, true); const yt = await googleAuth(event, true);
   if (sp?.setCookies) cookies.push(...sp.setCookies); if (yt?.setCookies) cookies.push(...yt.setCookies);
-  return json(200, { setup, spotify: { ...spotifySetup, connected: !!sp, name: sp?.session?.name || null }, youtube: { connected: !!yt, name: yt?.session?.name || null } }, cookies);
+  // Backfill sessions created before account-bound migration records existed.
+  // If identity lookup is temporarily unavailable, keep the valid login usable.
+  if (yt && !yt.session.channel_id && !yt.identityChecked) {
+    try {
+      const channels = await providerFetch(`${YOUTUBE_API}/channels?part=snippet&mine=true&maxResults=1`, { headers: bearer(yt.accessToken) }, 'google');
+      const channel = channels.items?.[0];
+      if (channel?.id) {
+        yt.session = { ...yt.session, channel_id: channel.id, name: channel.snippet?.title || yt.session.name };
+        // Send one final session cookie when this request also refreshed it.
+        for (let index = cookies.length - 1; index >= 0; index--) {
+          if (cookies[index].startsWith('g_session=')) cookies.splice(index, 1);
+        }
+        cookies.push(cookie('g_session', seal(yt.session), 60 * 60 * 24 * 30));
+      }
+    } catch {}
+  }
+  return json(200, { setup, spotify: { ...spotifySetup, connected: !!sp, name: sp?.session?.name || null, accountId: sp?.session?.user_id || null }, youtube: { connected: !!yt, name: yt?.session?.name || null, accountId: yt?.session?.channel_id || null } }, cookies);
 }
 
 async function logoutRoute(event) {
@@ -514,13 +567,15 @@ async function spotifySearchRoute(event) {
 
 async function spotifyCreateRoute(event) {
   assertSameOrigin(event); const auth = await spotifyAuth(event); const body = readBody(event); const name = String(body.name || '').trim().slice(0, 100);
+  assertExpectedAccount(body, auth, 'spotify', 'playlist-create');
   if (!name) throw new HttpError(400, 'Nome da playlist vazio.', 'BAD_NAME');
   const data = await providerFetch(`${SPOTIFY_API}/me/playlists`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ name, public: false, description: 'Criada pelo RHYFT' }) }, 'spotify');
-  return json(201, { id: data.id, name: data.name || name, url: data.external_urls?.spotify || `https://open.spotify.com/playlist/${data.id}` }, auth.setCookies);
+  return json(201, { id: data.id, name: data.name || name, url: data.external_urls?.spotify || `https://open.spotify.com/playlist/${data.id}`, accountId: auth.session.user_id || null }, auth.setCookies);
 }
 
 async function spotifyAddItemsRoute(event) {
   assertSameOrigin(event); const auth = await spotifyAuth(event); const body = readBody(event); const playlistId = spotifyId(body.playlistId);
+  assertExpectedAccount(body, auth, 'spotify', 'playlist-add');
   const uris = Array.isArray(body.uris) ? body.uris.map(String).filter(x => /^spotify:track:[A-Za-z0-9]+$/.test(x)).slice(0, 100) : [];
   if (!uris.length) throw new HttpError(400, 'Nenhuma faixa válida para adicionar.', 'BAD_ITEMS');
   const data = await providerFetch(`${SPOTIFY_API}/playlists/${playlistId}/items`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ uris }) }, 'spotify');
@@ -592,13 +647,15 @@ async function youtubeSearchRoute(event) {
 
 async function youtubeCreateRoute(event) {
   assertSameOrigin(event); const auth = await googleAuth(event); const body = readBody(event); const name = String(body.name || '').trim().slice(0, 150);
+  assertExpectedAccount(body, auth, 'youtube', 'playlist-create');
   if (!name) throw new HttpError(400, 'Nome da playlist vazio.', 'BAD_NAME');
   const data = await providerFetch(`${YOUTUBE_API}/playlists?part=snippet,status`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ snippet: { title: name, description: 'Criada pelo RHYFT' }, status: { privacyStatus: 'private' } }) }, 'google');
-  return json(201, { id: data.id, name: data.snippet?.title || name, url: `https://www.youtube.com/playlist?list=${data.id}` }, auth.setCookies);
+  return json(201, { id: data.id, name: data.snippet?.title || name, url: `https://www.youtube.com/playlist?list=${data.id}`, accountId: auth.session.channel_id || null }, auth.setCookies);
 }
 
 async function youtubeAddItemRoute(event) {
   assertSameOrigin(event); const auth = await googleAuth(event); const body = readBody(event); const playlistId = youtubePlaylistId(body.playlistId); const videoId = String(body.videoId || '').trim();
+  assertExpectedAccount(body, auth, 'youtube', 'playlist-add');
   if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) throw new HttpError(400, 'ID do vídeo inválido.', 'BAD_VIDEO');
   const data = await providerFetch(`${YOUTUBE_API}/playlistItems?part=snippet`, { method: 'POST', headers: { ...bearer(auth.accessToken), 'Content-Type': 'application/json' }, body: JSON.stringify({ snippet: { playlistId, resourceId: { kind: 'youtube#video', videoId } } }) }, 'google');
   return json(201, { ok: true, id: data.id || null }, auth.setCookies);
@@ -612,32 +669,50 @@ async function destinationStateRoute(event, provider) {
   const auth = isSpotify ? await spotifyAuth(event) : await googleAuth(event);
   const id = isSpotify ? spotifyId(query.input) : youtubePlaylistId(query.input);
   const headers = { headers: bearer(auth.accessToken) };
+  const accountId = (isSpotify ? auth.session.user_id : auth.session.channel_id) || null;
+  const context = { provider, operation: 'playlist-read', method: 'GET' };
+  const unavailable = details => new HttpError(404, 'A playlist de destino foi removida ou não está acessível para a conta conectada.', 'DESTINATION_UNAVAILABLE', { ...details, ...context, cause: 'destination-unavailable', upstreamStatus: details?.upstreamStatus || 200 });
+  const readDestination = async url => {
+    try {
+      return await providerFetch(url, headers, isSpotify ? 'spotify' : 'google');
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404 && !['quota', 'rate-limit'].includes(error.details?.cause)) throw unavailable(error.details);
+      throw error;
+    }
+  };
+  const checkOwner = (ownerId, collaborative = false) => {
+    if (accountId && ownerId && ownerId !== accountId && !collaborative) {
+      throw new HttpError(409, 'Esta playlist de destino pertence a outra conta. Conecte a conta original ou crie um destino para a conta atual.', 'DESTINATION_ACCOUNT_MISMATCH', { ...context, cause: 'account-mismatch' });
+    }
+  };
   let name, ids, nextPage = null;
   if (isSpotify) {
     const offset = query.page === undefined ? 0 : Number(query.page);
     if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, 'Página inválida.', 'BAD_PAGE');
     if (!offset) {
-      const info = await providerFetch(`${SPOTIFY_API}/playlists/${id}`, headers, 'spotify');
+      const info = await readDestination(`${SPOTIFY_API}/playlists/${id}`);
+      checkOwner(info.owner?.id, info.collaborative === true);
       name = info.name;
     }
-    const data = await providerFetch(`${SPOTIFY_API}/playlists/${id}/items?limit=50&offset=${offset}`, headers, 'spotify');
+    const data = await readDestination(`${SPOTIFY_API}/playlists/${id}/items?limit=50&offset=${offset}`);
     const items = data.items || [];
     ids = items.map(entry => (entry.item || entry.track || entry)?.id).filter(Boolean);
     if (data.next && items.length) nextPage = String(offset + items.length);
   } else {
     if (!query.page) {
-      const info = await providerFetch(`${YOUTUBE_API}/playlists?part=snippet&id=${encodeURIComponent(id)}&maxResults=1`, headers, 'google');
-      if (!info.items?.[0]) throw new HttpError(404, 'Playlist do YouTube não encontrada ou não acessível.', 'NOT_FOUND');
+      const info = await readDestination(`${YOUTUBE_API}/playlists?part=snippet&id=${encodeURIComponent(id)}&maxResults=1`);
+      if (!info.items?.[0]) throw unavailable();
+      checkOwner(info.items[0].snippet?.channelId);
       name = info.items[0].snippet?.title;
     }
     const params = new URLSearchParams({ part: 'contentDetails', playlistId: id, maxResults: '50' });
     if (query.page) params.set('pageToken', query.page);
-    const data = await providerFetch(`${YOUTUBE_API}/playlistItems?${params}`, headers, 'google');
+    const data = await readDestination(`${YOUTUBE_API}/playlistItems?${params}`);
     ids = (data.items || []).map(item => item.contentDetails?.videoId).filter(Boolean);
     nextPage = data.nextPageToken || null;
   }
   const url = isSpotify ? `https://open.spotify.com/playlist/${id}` : `https://www.youtube.com/playlist?list=${id}`;
-  return json(200, { id, name, url, ids, nextPage }, auth.setCookies);
+  return json(200, { id, name, url, ids, nextPage, accountId }, auth.setCookies);
 }
 
 exports.handler = async (event) => {

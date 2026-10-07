@@ -24,12 +24,19 @@
     document.dispatchEvent(new CustomEvent('rhyft:history-updated'));
   }
 
-  function find(direction, input) {
+  function find(direction, input, accountId = null) {
     const id = playlistId(direction, input);
     if (!id) return null;
-    return load().find(item => item.direction === direction &&
+    const records = load().filter(item => item.status !== 'destination-unavailable' && item.direction === direction &&
       playlistId(direction, item.sourceInput) === id &&
-      playlistId(direction, item.destinationId || item.destinationUrl, true)) || null;
+      playlistId(direction, item.destinationId || item.destinationUrl, true));
+    if (accountId) {
+      const own = records.find(item => item.destinationAccountId === accountId);
+      if (own) return own;
+      const legacy = records.find(item => !item.destinationAccountId);
+      if (legacy) return legacy;
+    }
+    return records[0] || null;
   }
 
   window.RhyftMigrationStore = { load, save, find, playlistId };

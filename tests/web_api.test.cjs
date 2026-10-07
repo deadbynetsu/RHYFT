@@ -11,7 +11,7 @@ function backend(fetch, env = {}, runtime = {}) {
     setTimeout, clearTimeout, process: { env: { SESSION_SECRET: crypto.randomBytes(32).toString('hex'), ...env } }, ...runtime
   });
   const code = fs.readFileSync(path.join(__dirname, '../netlify/functions/api.js'), 'utf8');
-  vm.runInContext(`${code}\nexports.testing = {providerFetch, seal, unseal, refreshSpotify};`, context);
+  vm.runInContext(`${code}\nexports.testing = {providerFetch, seal, unseal, refreshSpotify, refreshGoogle};`, context);
   return context.exports;
 }
 function response(status, body) {
@@ -344,12 +344,15 @@ for (const provider of ['spotify', 'youtube']) {
   });
 }
 
-test('inaccessible destinations fail instead of creating a replacement', async () => {
+test('an inaccessible destination identifies its scope for safe frontend recovery', async () => {
   const api = backend(async () => response(200, {items: []}));
   const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
   const result = await api.handler({path: '/api/youtube/playlist/state', httpMethod: 'GET',
     headers: {cookie: `g_session=${session}`}, queryStringParameters: {input: 'Playlist1234567890'}});
   assert.equal(result.statusCode, 404);
+  assert.equal(JSON.parse(result.body).code, 'DESTINATION_UNAVAILABLE');
+  assert.equal(JSON.parse(result.body).details.operation, 'playlist-read');
+  assert.equal(JSON.parse(result.body).details.upstreamStatus, 200, 'YouTube returned an empty listing, not an upstream HTTP 404');
 });
 
 test('YouTube search requests ten candidates with their recording durations', async () => {
@@ -472,4 +475,310 @@ test('a callback with an invalid OAuth state cannot exchange a token', async () 
   const start = await api.handler(event('spotify/start', {client_id: personalId}));
   const result = await api.handler(event('spotify/callback', {state: 'wrong', code: 'fixture-code'}, `sp_oauth=${savedCookie(start, 'sp_oauth')}`));
   assert.match(new URL(result.headers.Location, 'https://rhyft.example.test').searchParams.get('auth_error'), /inválida/);
+});
+
+const googleEnv = {GOOGLE_CLIENT_ID: 'fixture-google-client', GOOGLE_CLIENT_SECRET: 'fixture-google-secret'};
+async function googleLogin(api, previous) {
+  const start = await api.handler(event('google/start'));
+  const oauthCookie = savedCookie(start, 'g_oauth');
+  const oauth = api.testing.unseal(oauthCookie);
+  const cookies = [`g_oauth=${oauthCookie}`];
+  if (previous) cookies.push(`g_session=${api.testing.seal(previous)}`);
+  return api.handler(event('google/callback', {state: oauth.state, code: 'fixture-code'}, cookies.join('; ')));
+}
+
+test('Google reconnect keeps a refresh token only for the same confirmed channel', async () => {
+  const api = backend(async url => url.endsWith('/token')
+    ? response(200, {access_token: 'new-access', expires_in: 3600})
+    : response(200, {items: [{id: 'channel-one', snippet: {title: 'One'}}]}), googleEnv);
+  const result = await googleLogin(api, {channel_id: 'channel-one', refresh_token: 'same-account-refresh'});
+  assert.match(result.headers.Location, /auth=google-ok/);
+  const session = api.testing.unseal(savedCookie(result, 'g_session'));
+  assert.equal(session.channel_id, 'channel-one');
+  assert.equal(session.refresh_token, 'same-account-refresh');
+  assert.equal(session.access_token, 'new-access');
+});
+
+for (const previousChannel of ['different-channel', undefined]) {
+  test(`Google never combines a new account with a ${previousChannel ? 'different' : 'legacy unknown'} account refresh token`, async () => {
+    const api = backend(async url => url.endsWith('/token')
+      ? response(200, {access_token: 'new-account-access', expires_in: 3600})
+      : response(200, {items: [{id: 'new-channel', snippet: {title: 'New'}}]}), googleEnv);
+    const result = await googleLogin(api, {channel_id: previousChannel, refresh_token: 'old-account-refresh'});
+    const url = new URL(result.headers.Location, 'https://rhyft.example.test');
+    assert.match(url.searchParams.get('auth_error'), /acesso offline para esta conta/);
+    assert.equal(url.searchParams.has('auth'), false);
+    assert.ok(result.multiValueHeaders['Set-Cookie'].some(value => value.startsWith('g_session=;') && value.includes('Max-Age=0')));
+    assert.doesNotMatch(result.body, /old-account-refresh|new-account-access/);
+  });
+}
+
+test('Google account switch uses the new account refresh token and stable channel identity', async () => {
+  const api = backend(async url => url.endsWith('/token')
+    ? response(200, {access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600})
+    : response(200, {items: [{id: 'new-channel', snippet: {title: 'New'}}]}), googleEnv);
+  const result = await googleLogin(api, {channel_id: 'old-channel', refresh_token: 'old-refresh'});
+  const session = api.testing.unseal(savedCookie(result, 'g_session'));
+  assert.equal(session.channel_id, 'new-channel');
+  assert.equal(session.refresh_token, 'new-refresh');
+});
+
+test('an unavailable channel identity cannot authorize reuse of an old refresh token', async () => {
+  const api = backend(async url => url.endsWith('/token')
+    ? response(200, {access_token: 'new-access', expires_in: 3600})
+    : response(403, {error: {errors: [{reason: 'quotaExceeded'}]}}), googleEnv);
+  const result = await googleLogin(api, {channel_id: 'old-channel', refresh_token: 'old-refresh'});
+  assert.match(result.headers.Location, /auth_error=/);
+  assert.ok(result.multiValueHeaders['Set-Cookie'].some(value => value.startsWith('g_session=;')));
+});
+
+test('session identity backfill refreshes legacy credentials and persists a channel ID without exposing tokens', async () => {
+  const calls = [];
+  const api = backend(async (url, options) => {
+    calls.push(url);
+    if (url.endsWith('/token')) return response(200, {access_token: 'refreshed-private-access', expires_in: 3600});
+    assert.equal(options.headers.Authorization, 'Bearer refreshed-private-access');
+    return response(200, {items: [{id: 'backfilled-channel', snippet: {title: 'My channel'}}]});
+  }, googleEnv);
+  const old = api.testing.seal({access_token: 'old-private-access', refresh_token: 'private-refresh', expires_at: 0});
+  const result = await api.handler(event('session', {}, `g_session=${old}`));
+  const data = JSON.parse(result.body);
+  assert.equal(data.youtube.connected, true);
+  assert.equal(data.youtube.accountId, 'backfilled-channel');
+  assert.equal(data.youtube.name, 'My channel');
+  assert.doesNotMatch(result.body, /private-access|private-refresh/);
+  const cookieValues = result.multiValueHeaders['Set-Cookie'].filter(value => value.startsWith('g_session='));
+  assert.equal(cookieValues.length, 1, 'refresh and identity backfill must persist one final cookie');
+  const stored = api.testing.unseal(decodeURIComponent(cookieValues.at(-1).split(';')[0].slice('g_session='.length)));
+  assert.equal(stored.channel_id, 'backfilled-channel');
+  assert.equal(stored.refresh_token, 'private-refresh');
+  assert.equal(calls.length, 2);
+});
+
+test('a legacy identity lookup quota failure keeps the valid login connected with unknown identity', async () => {
+  const api = backend(async () => response(403, {error: {errors: [{reason: 'quotaExceeded'}]}}));
+  const old = api.testing.seal({access_token: 'private-access', expires_at: Date.now() + 3600000});
+  const result = await api.handler(event('session', {}, `g_session=${old}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 200);
+  assert.equal(data.youtube.connected, true);
+  assert.equal(data.youtube.accountId, null);
+});
+
+test('a new offline token remains usable when the channel identity lookup is quota-limited', async () => {
+  const api = backend(async url => url.endsWith('/token')
+    ? response(200, {access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600})
+    : response(403, {error: {errors: [{reason: 'quotaExceeded'}]}}), googleEnv);
+  const result = await googleLogin(api, {channel_id: 'old-channel', refresh_token: 'old-refresh'});
+  assert.match(result.headers.Location, /auth=google-ok/);
+  const session = api.testing.unseal(savedCookie(result, 'g_session'));
+  assert.equal(session.channel_id, null);
+  assert.equal(session.refresh_token, 'new-refresh');
+});
+
+test('known session account IDs are public and do not trigger extra identity requests', async () => {
+  const api = backend(() => {throw new Error('unnecessary account request');});
+  const sp = api.testing.seal({user_id: 'spotify-user', access_token: 'private-sp', expires_at: Date.now() + 3600000});
+  const yt = api.testing.seal({channel_id: 'youtube-channel', access_token: 'private-yt', expires_at: Date.now() + 3600000});
+  const result = await api.handler(event('session', {}, `sp_session=${sp}; g_session=${yt}`));
+  const data = JSON.parse(result.body);
+  assert.equal(data.spotify.accountId, 'spotify-user');
+  assert.equal(data.youtube.accountId, 'youtube-channel');
+  assert.doesNotMatch(result.body, /private-sp|private-yt/);
+});
+
+for (const provider of ['spotify', 'youtube']) {
+  test(`${provider} detects a readable destination belonging to a different account before reading its tracks`, async () => {
+    let calls = 0;
+    const api = backend(async () => {
+      calls++;
+      return response(200, provider === 'youtube'
+        ? {items: [{snippet: {title: 'Public other playlist', channelId: 'other-owner'}}]}
+        : {name: 'Public other playlist', owner: {id: 'other-owner'}, collaborative: false});
+    });
+    const key = provider === 'youtube' ? 'channel_id' : 'user_id';
+    const session = api.testing.seal({[key]: 'connected-owner', access_token: 'test-only', expires_at: Date.now() + 3600000});
+    const cookie = `${provider === 'youtube' ? 'g' : 'sp'}_session=${session}`;
+    const result = await api.handler(event(`${provider}/playlist/state`, {input: 'Playlist1234567890'}, cookie));
+    const data = JSON.parse(result.body);
+    assert.equal(result.statusCode, 409);
+    assert.equal(data.code, 'DESTINATION_ACCOUNT_MISMATCH');
+    assert.equal(data.details.provider, provider);
+    assert.equal(data.details.operation, 'playlist-read');
+    assert.equal(calls, 1);
+  });
+
+  test(`${provider} destination state includes the authenticated account ID`, async () => {
+    const api = backend(async url => {
+      if (url.includes('/playlists?')) return response(200, {items: [{snippet: {title: 'Mine', channelId: 'connected-owner'}}]});
+      if (/\/playlists\/[^/?]+$/.test(url)) return response(200, {name: 'Mine', owner: {id: 'connected-owner'}});
+      return response(200, {items: []});
+    });
+    const key = provider === 'youtube' ? 'channel_id' : 'user_id';
+    const session = api.testing.seal({[key]: 'connected-owner', access_token: 'test-only', expires_at: Date.now() + 3600000});
+    const result = await api.handler(event(`${provider}/playlist/state`, {input: 'Playlist1234567890'}, `${provider === 'youtube' ? 'g' : 'sp'}_session=${session}`));
+    assert.equal(result.statusCode, 200);
+    assert.equal(JSON.parse(result.body).accountId, 'connected-owner');
+  });
+
+  test(`${provider} provider destination 404s are scoped for recovery`, async () => {
+    const api = backend(async () => response(404, {error: {message: 'Not found', errors: [{reason: 'playlistNotFound'}]}}));
+    const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+    const result = await api.handler(event(`${provider}/playlist/state`, {input: 'Playlist1234567890'}, `${provider === 'youtube' ? 'g' : 'sp'}_session=${session}`));
+    assert.equal(result.statusCode, 404);
+    const data = JSON.parse(result.body);
+    assert.equal(data.code, 'DESTINATION_UNAVAILABLE');
+    assert.equal(data.details.operation, 'playlist-read');
+    assert.equal(data.details.upstreamStatus, 404);
+  });
+}
+
+test('a collaborative Spotify destination remains readable for a different authenticated user', async () => {
+  const api = backend(async url => /\/playlists\/[^/?]+$/.test(url)
+    ? response(200, {name: 'Shared', owner: {id: 'other-owner'}, collaborative: true})
+    : response(200, {items: []}));
+  const session = api.testing.seal({user_id: 'collaborator', access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const result = await api.handler(event('spotify/playlist/state', {input: 'Playlist1234567890'}, `sp_session=${session}`));
+  assert.equal(result.statusCode, 200);
+  assert.equal(JSON.parse(result.body).accountId, 'collaborator');
+});
+
+test('source 404s are not reclassified as missing destinations', async () => {
+  const api = backend(async () => response(404, {error: {message: 'Source missing', errors: [{reason: 'playlistNotFound'}]}}));
+  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const result = await api.handler(event('youtube/playlist', {input: 'Playlist1234567890'}, `g_session=${session}`));
+  assert.equal(result.statusCode, 404);
+  assert.equal(JSON.parse(result.body).code, 'GOOGLE_404');
+});
+
+for (const [status, reason, cause] of [[403, 'quotaExceeded', 'quota'], [429, 'rateLimitExceeded', 'rate-limit'], [401, 'authError', 'auth']]) {
+  test(`destination reads preserve ${cause} errors without suggesting replacement`, async () => {
+    const api = backend(async () => response(status, {error: {message: 'Provider failure', errors: [{reason}]}}));
+    const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+    const result = await api.handler(event('youtube/playlist/state', {input: 'Playlist1234567890'}, `g_session=${session}`));
+    assert.equal(result.statusCode, status);
+    assert.equal(JSON.parse(result.body).code, `GOOGLE_${status}`);
+    assert.notEqual(JSON.parse(result.body).code, 'DESTINATION_UNAVAILABLE');
+  });
+}
+
+for (const provider of ['spotify', 'youtube']) {
+  for (const operation of ['create', 'add']) {
+    for (const expectedMatches of [false, true]) {
+      test(`${provider} ${operation} ${expectedMatches ? 'accepts the expected account' : 'blocks account switches before mutation'}`, async () => {
+        let calls = 0;
+        const api = backend(async (_url, options) => {
+          calls++;
+          assert.equal(options.method, 'POST');
+          return response(201, {id: 'Created123456789', name: 'Fixture', snippet: {title: 'Fixture'}});
+        });
+        const key = provider === 'youtube' ? 'channel_id' : 'user_id';
+        const session = api.testing.seal({[key]: 'current-account', access_token: 'test-only', expires_at: Date.now() + 3600000});
+        const route = operation === 'create' ? `${provider}/playlist` : provider === 'youtube' ? 'youtube/playlist/item' : 'spotify/playlist/items';
+        const body = {name: 'Fixture', playlistId: 'Playlist1234567890', videoId: 'Video123456', uris: ['spotify:track:Track12345'], expectedAccountId: expectedMatches ? 'current-account' : 'previous-account'};
+        const result = await api.handler({...event(route, {}, `${provider === 'youtube' ? 'g' : 'sp'}_session=${session}`), httpMethod: 'POST', body: JSON.stringify(body)});
+        assert.equal(result.statusCode, expectedMatches ? 201 : 409);
+        assert.equal(calls, expectedMatches ? 1 : 0);
+        if (!expectedMatches) assert.equal(JSON.parse(result.body).code, 'ACCOUNT_CHANGED');
+        else if (operation === 'create') assert.equal(JSON.parse(result.body).accountId, 'current-account');
+      });
+    }
+  }
+}
+
+test('a missing session identity cannot satisfy an expected mutation account', async () => {
+  let calls = 0;
+  const api = backend(async () => {calls++; return response(201, {id: 'unexpected'});});
+  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const result = await api.handler({...event('youtube/playlist', {}, `g_session=${session}`), httpMethod: 'POST', body: JSON.stringify({name: 'Fixture', expectedAccountId: 'expected-channel'})});
+  assert.equal(result.statusCode, 409);
+  assert.equal(JSON.parse(result.body).code, 'ACCOUNT_CHANGED');
+  assert.equal(calls, 0);
+});
+
+test('a legacy mixed Google cookie cannot keep the old channel identity after refreshing another account', async () => {
+  let mutations = 0;
+  const api = backend(async (url, options) => {
+    if (url.endsWith('/token')) return response(200, {access_token: 'account-two-access', expires_in: 3600});
+    if (url.includes('/channels?')) {
+      assert.equal(options.headers.Authorization, 'Bearer account-two-access');
+      return response(200, {items: [{id: 'account-two-channel', snippet: {title: 'Two'}}]});
+    }
+    mutations++;
+    return response(201, {id: 'unexpected-mutation'});
+  }, googleEnv);
+  const mixed = {channel_id: 'account-one-channel', access_token: 'account-one-access', refresh_token: 'account-two-refresh', expires_at: 0};
+  const session = api.testing.seal(mixed);
+  const result = await api.handler({...event('youtube/playlist', {}, `g_session=${session}`), httpMethod: 'POST', body: JSON.stringify({name: 'Must not create', expectedAccountId: 'account-one-channel'})});
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 401);
+  assert.equal(data.code, 'AUTH_REQUIRED');
+  assert.equal(data.details.cause, 'account-mismatch');
+  assert.match(data.error, /credenciais de contas diferentes.*Conecte/);
+  assert.equal(mutations, 0);
+  assert.doesNotMatch(result.body, /account-two-access|account-two-refresh|account-one-access/);
+  const optional = await api.handler(event('session', {}, `g_session=${session}`));
+  assert.equal(optional.statusCode, 200);
+  assert.equal(JSON.parse(optional.body).youtube.connected, false);
+});
+
+test('a same-channel Google refresh verifies the new token and preserves the confirmed identity', async () => {
+  const api = backend(async (url, options) => {
+    if (url.endsWith('/token')) return response(200, {access_token: 'new-access', expires_in: 3600});
+    assert.equal(options.headers.Authorization, 'Bearer new-access');
+    return response(200, {items: [{id: 'same-channel', snippet: {title: 'Current channel title'}}]});
+  }, googleEnv);
+  const refreshed = await api.testing.refreshGoogle({channel_id: 'same-channel', name: 'Old title', refresh_token: 'same-refresh'});
+  assert.equal(refreshed.channel_id, 'same-channel');
+  assert.equal(refreshed.access_token, 'new-access');
+  assert.equal(refreshed.refresh_token, 'same-refresh');
+  assert.equal(refreshed.name, 'Current channel title');
+});
+
+test('a known account refresh preserves quota verification failures instead of falsely reporting disconnected', async () => {
+  const api = backend(async url => url.endsWith('/token')
+    ? response(200, {access_token: 'new-access', expires_in: 3600})
+    : response(403, {error: {errors: [{reason: 'quotaExceeded'}]}}), googleEnv);
+  const session = api.testing.seal({channel_id: 'known-channel', access_token: 'old-access', refresh_token: 'same-refresh', expires_at: 0});
+  const result = await api.handler(event('session', {}, `g_session=${session}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 403);
+  assert.equal(data.code, 'GOOGLE_403');
+  assert.equal(data.details.cause, 'quota');
+  assert.equal(data.details.operation, 'account');
+  assert.equal(result.multiValueHeaders, undefined, 'unverified refreshed credentials must not be persisted');
+});
+
+test('a known account refresh preserves identity connection failures instead of reporting disconnected', async () => {
+  const api = backend(async url => {
+    if (url.endsWith('/token')) return response(200, {access_token: 'new-access', expires_in: 3600});
+    throw new TypeError('private-connection-details');
+  }, googleEnv);
+  const session = api.testing.seal({channel_id: 'known-channel', access_token: 'old-access', refresh_token: 'same-refresh', expires_at: 0});
+  const result = await api.handler(event('session', {}, `g_session=${session}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 502);
+  assert.equal(data.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(data.details.operation, 'account');
+  assert.equal(result.multiValueHeaders, undefined);
+  assert.doesNotMatch(result.body, /private-connection-details|new-access|same-refresh/);
+});
+
+test('an unknown legacy account remains connected if refresh identity lookup is quota-limited and is checked only once', async () => {
+  let calls = 0;
+  const api = backend(async url => {
+    calls++;
+    return url.endsWith('/token')
+      ? response(200, {access_token: 'new-access', expires_in: 3600})
+      : response(403, {error: {errors: [{reason: 'quotaExceeded'}]}});
+  }, googleEnv);
+  const session = api.testing.seal({access_token: 'old-access', refresh_token: 'same-refresh', expires_at: 0});
+  const result = await api.handler(event('session', {}, `g_session=${session}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 200);
+  assert.equal(data.youtube.connected, true);
+  assert.equal(data.youtube.accountId, null);
+  assert.equal(calls, 2, 'the same identity lookup must not be repeated by session backfill');
+  const stored = api.testing.unseal(savedCookie(result, 'g_session'));
+  assert.equal(stored.access_token, 'new-access');
 });

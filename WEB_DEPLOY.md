@@ -19,7 +19,9 @@ O repositório agora contém um site completo em `site/` e uma API serverless em
 
 O destino e o progresso são salvos no histórico deste navegador assim que a playlist é criada, e atualizados a cada envio confirmado. Use **Retomar / atualizar** no histórico ou inicie novamente com a mesma playlist de origem e o mesmo sentido. Links do Spotify, URIs e IDs equivalentes identificam a mesma origem; links do YouTube e YouTube Music também.
 
-Antes de continuar, o site consulta as faixas presentes no destino para evitar duplicatas. Migrações do histórico antigo também reutilizam o link de destino salvo. Faixas com erro podem ser tentadas novamente e escolhas manuais pendentes são preservadas ao recarregar a página. Uma playlist removida ou sem acesso interrompe a retomada; o site não cria outra automaticamente.
+Antes de continuar, o site consulta as faixas presentes no destino para evitar duplicatas. Migrações do histórico antigo também reutilizam o link de destino salvo. Faixas com erro podem ser tentadas novamente e escolhas manuais pendentes são preservadas ao recarregar a página. Se a API confirmar que o destino salvo não existe ou não está acessível para a conta atual (`404`), o site cria uma playlist substituta, conserva o registro anterior como **Destino indisponível** e reconstrói o progresso usando o novo destino vazio. Ao retomar outra vez, usa a substituta. Falhas de autenticação, cota, rede, timeout ou `403` genérico não provocam criação de outra playlist. Uma falha ao ler a playlist de origem também não é tratada como um destino ausente.
+
+O histórico identifica a conta de destino pelo usuário Spotify ou canal YouTube autorizado, sem armazenar tokens. A mesma origem em outra conta usa um registro separado; ao voltar à conta anterior, seu destino original pode ser retomado. Playlists públicas que pertencem a outro canal são detectadas antes do envio. Sessões Google antigas recebem a identidade do canal ao consultar as conexões, quando a API permite essa verificação. Uma reconexão só reaproveita o refresh token anterior quando o canal é comprovadamente o mesmo. A renovação do token verifica novamente o canal para detectar credenciais antigas misturadas entre contas; falhas de cota ou conexão preservam seu diagnóstico. Envios com uma conta diferente daquela verificada pela migração são recusados antes de alterar a playlist.
 
 A busca separa créditos de artistas do título, reconhece canais Topic/VEVO e ignora rótulos como “Official Audio” e “lyrics”. Título, artista, versão e duração determinam a correspondência; covers, remixes, gravações ao vivo e durações incompatíveis ficam para revisão. A busca no YouTube considera até dez resultados por consulta; uma segunda consulta mais específica ocorre somente quando a primeira não encontra uma correspondência clara. Pendências salvas por versões anteriores são reavaliadas ao retomar, aproveitando os candidatos já disponíveis. Cada faixa ainda incerta mostra o motivo e um link para ouvir; opções resolvidas saem da lista.
 
@@ -42,7 +44,7 @@ O log identifica a etapa e a plataforma que falharam, com HTTP, código do erro,
 Os testes da API usam apenas Node.js 22 ou superior:
 
 ```bash
-node --test tests/web_api.test.cjs tests/web_matching.test.cjs tests/web_pacing.test.cjs tests/web_search_cache.test.cjs
+node --test tests/web_api.test.cjs tests/web_matching.test.cjs tests/web_pacing.test.cjs tests/web_search_cache.test.cjs tests/web_migration_store.test.cjs
 ```
 
 Os testes da interface executam Chromium com Playwright e respostas simuladas das APIs, sem credenciais ou alterações em playlists reais. Instale as ferramentas fora do checkout:
@@ -53,7 +55,7 @@ npm install --prefix /tmp/rhyft-web-tests playwright@1.62.1
 NODE_PATH=/tmp/rhyft-web-tests/node_modules node --test tests/web_migration.test.cjs
 ```
 
-Se Chromium já estiver instalado, defina `CHROMIUM_PATH` para seu executável e omita o download do navegador. Os testes cobrem os dois sentidos, retomada pelo histórico antigo e por links equivalentes, recarregamento, falhas temporárias, respostas de escrita perdidas, revisão manual e cancelamento.
+Se Chromium já estiver instalado, defina `CHROMIUM_PATH` para seu executável e omita o download do navegador. Os testes cobrem os dois sentidos, retomada pelo histórico antigo e por links equivalentes, recarregamento, falhas temporárias, respostas de escrita perdidas, revisão manual e cancelamento. Também cobrem recuperação de destino removido, separação por conta, preservação do histórico anterior, retomada da playlist substituta e erros de origem/API que não devem criar outro destino. Os testes do servidor verificam a identidade após login/renovação e impedem alterações com credenciais de outra conta.
 
 ## 1. Publicar no Netlify
 

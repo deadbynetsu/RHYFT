@@ -53,6 +53,7 @@
   }
 
   function statusLabel(status, pending = 0) {
+    if (status === 'destination-unavailable') return 'Destino indisponível';
     if (status === 'running') return 'Em andamento';
     if (status === 'cancelled') return 'Cancelada';
     if (status === 'interrupted') return 'Interrompida';

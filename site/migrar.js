@@ -214,7 +214,7 @@
     }
   }
 
-  async function loadSession() {
+  async function loadSession(required = false) {
     try {
       const data = await api('/session');
       state.session = data;
@@ -224,9 +224,13 @@
       if (data.setup && !data.setup.ready) {
         showToast(`Configuração do site incompleta: ${data.setup.missing.join(', ')}`, true);
       }
+      return true;
     } catch (error) {
+      state.session = null;
       connectedCard('spotify', null); connectedCard('youtube', null);
       showToast(error.message, true);
+      if (required) throw error;
+      return false;
     }
   }
 
@@ -242,6 +246,7 @@
   }
 
   async function logout(provider) {
+    if (state.running || state.reviewing) return;
     try {
       await api('/logout', { method: 'POST', body: { provider } });
       searchCache.clear(provider === 'google' ? 'youtube' : 'spotify');
@@ -319,6 +324,30 @@
 
   function sourceKey(track) { return track.id || queryFor(track); }
 
+  function destinationAccount(kind) { return state.session?.[kind]?.accountId || null; }
+
+  function savedDestination(input = state.sourceInput) {
+    const kind = state.direction === 'spotify-youtube' ? 'youtube' : 'spotify';
+    return store.find(state.direction, input, destinationAccount(kind)) || store.load().find(record =>
+      record.status === 'destination-unavailable' && record.direction === state.direction &&
+      store.playlistId(state.direction, record.sourceInput) === store.playlistId(state.direction, input));
+  }
+
+  function unavailableDestination(error) {
+    if (error.context?.operation !== 'playlist-read') return false;
+    if (error.code === 'DESTINATION_ACCOUNT_MISMATCH' && error.status === 409) return true;
+    if (error.status !== 404) return false;
+    if (error.code === 'DESTINATION_UNAVAILABLE') return error.details?.operation === 'playlist-read';
+    // Older deployments used NOT_FOUND for both playlists and unknown API routes.
+    if (error.code === 'NOT_FOUND') return /playlist.*(?:não encontrada|não acessível|removida|indisponível)/i.test(error.message);
+    return ['GOOGLE_404', 'SPOTIFY_404'].includes(error.code) && error.details?.operation === 'playlist-read';
+  }
+
+  function checkStorage() {
+    try { localStorage.setItem('rhyft.web.storage-check', '1'); localStorage.removeItem('rhyft.web.storage-check'); }
+    catch { throw new Error('Habilite o armazenamento deste navegador para salvar e retomar a migração.'); }
+  }
+
   async function destinationIds(kind) {
     const ids = new Set(), pages = new Set();
     let page = null;
@@ -326,7 +355,10 @@
       const suffix = page === null ? '' : `&page=${encodeURIComponent(page)}`;
       const data = await api(`/${kind}/playlist/state?input=${encodeURIComponent(state.destination.id)}${suffix}`);
       for (const id of data.ids || []) ids.add(id);
-      if (page === null) state.destination.name = data.name || state.destination.name;
+      if (page === null) {
+        state.destination.name = data.name || state.destination.name;
+        if (data.accountId) state.record.destinationAccountId = data.accountId;
+      }
       page = data.nextPage ?? null;
       if (page !== null && pages.has(page)) throw new Error('Não foi possível conferir todas as faixas da playlist de destino.');
       pages.add(page);
@@ -335,42 +367,83 @@
   }
 
   async function prepareDestination(kind, source, name) {
-    const previous = (state.selectedRecord && store.load().find(record => record.id === state.selectedRecord.id)) || store.find(state.direction, state.sourceInput);
+    const accountId = destinationAccount(kind);
+    const records = store.load();
+    let previous = (state.selectedRecord && records.find(record => record.id === state.selectedRecord.id && record.direction === state.direction &&
+      store.playlistId(state.direction, record.sourceInput) === source.id)) || savedDestination();
     state.selectedRecord = null;
+    // An archived history item points to its successfully created replacement.
+    const replacement = previous?.replacementId && records.find(record => record.id === previous.replacementId && record.status !== 'destination-unavailable');
+    if (replacement && (!accountId || !replacement.destinationAccountId || replacement.destinationAccountId === accountId)) previous = replacement;
+    if (previous?.status === 'destination-unavailable') {
+      const active = store.find(state.direction, state.sourceInput, accountId);
+      if (active && (!accountId || !active.destinationAccountId || active.destinationAccountId === accountId)) previous = active;
+    }
+    if (previous?.destinationAccountId && accountId && previous.destinationAccountId !== accountId) {
+      const own = store.find(state.direction, state.sourceInput, accountId);
+      if (own?.destinationAccountId === accountId) previous = own;
+    }
+    let recover = null;
     if (previous) {
-      state.record = { ...previous };
-      const id = store.playlistId(state.direction, previous.destinationId || previous.destinationUrl, true);
-      if (!id) throw new Error('O histórico não possui um destino válido para retomar.');
-      state.destination = { id, url: previous.destinationUrl, name: previous.destinationName || name };
-      // Preserve the checkpoint even if the destination cannot currently be read.
-      state.processed = { ...previous.processed };
-      state.inFlight = previous.inFlight || [];
-      state.pending = previous.pendingItems || [];
-      state.added = previous.added || 0;
-      state.usedIds = await destinationIds(kind);
-      state.added = state.usedIds.size;
-      state.processed = { ...previous.processed };
-      for (const [key, value] of Object.entries(state.processed)) {
-        if (value !== 'ignored' && !state.usedIds.has(value)) delete state.processed[key];
+      if (accountId && previous.destinationAccountId && previous.destinationAccountId !== accountId) {
+        log('♻ O destino salvo pertence a outra conta. A migração usará uma nova playlist na conta conectada; o histórico anterior foi mantido.', 'warn');
+        recover = previous;
+      } else {
+        state.record = { ...previous };
+        const id = store.playlistId(state.direction, previous.destinationId || previous.destinationUrl, true);
+        if (!id) throw new Error('O histórico não possui um destino válido para retomar.');
+        state.destination = { id, url: previous.destinationUrl, name: previous.destinationName || name };
+        // Preserve the checkpoint even if the destination cannot currently be read.
+        state.processed = { ...previous.processed };
+        state.inFlight = previous.inFlight || [];
+        state.pending = previous.pendingItems || [];
+        state.added = previous.added || 0;
+        try { state.usedIds = await destinationIds(kind); }
+        catch (error) {
+          if (!unavailableDestination(error)) throw error;
+          log(`⚠ ${describeFailure(error)} O destino salvo não está disponível para esta conta. Criando uma nova playlist e mantendo o histórico anterior.`, 'warn');
+          recover = previous;
+          // Preserve the old checkpoint, even if creating its replacement fails.
+          try { store.save({ ...previous, status: 'destination-unavailable', updatedAt: new Date().toISOString() }); }
+          catch { throw new Error('Não foi possível salvar o progresso neste navegador. Libere espaço no armazenamento antes de continuar.'); }
+          state.destination = null; state.record = null;
+        }
+        if (!recover) {
+          state.added = state.usedIds.size;
+          state.processed = { ...previous.processed };
+          for (const [key, value] of Object.entries(state.processed)) {
+            if (value !== 'ignored' && !state.usedIds.has(value)) delete state.processed[key];
+          }
+          // A previous response can have been lost after the platform accepted the write.
+          for (const entry of previous.inFlight || []) {
+            if (state.usedIds.has(entry.candidate.id)) state.processed[sourceKey(entry.source)] = entry.candidate.id;
+          }
+          state.inFlight = [];
+          state.pending = (previous.pendingItems || []).filter(item => !state.processed[sourceKey(item.source)]);
+          log(`♻ Playlist “${state.destination.name}” recuperada do histórico; ${state.usedIds.size} faixa(s) já presentes.`, 'ok');
+        }
       }
-      // A previous response can have been lost after the platform accepted the write.
-      for (const entry of previous.inFlight || []) {
-        if (state.usedIds.has(entry.candidate.id)) state.processed[sourceKey(entry.source)] = entry.candidate.id;
-      }
-      state.inFlight = [];
-      state.pending = (previous.pendingItems || []).filter(item => !state.processed[sourceKey(item.source)]);
-      log(`♻ Playlist “${state.destination.name}” recuperada do histórico; ${state.usedIds.size} faixa(s) já presentes.`, 'ok');
-    } else {
+    }
+    if (!previous || recover) {
       // Check storage before creating anything remotely.
-      try { localStorage.setItem('rhyft.web.storage-check', '1'); localStorage.removeItem('rhyft.web.storage-check'); }
-      catch { throw new Error('Habilite o armazenamento deste navegador para salvar e retomar a migração.'); }
+      checkStorage();
+      state.destination = null; state.record = null; state.usedIds = new Set(); state.added = 0; state.inFlight = [];
+      const sourceKeys = new Set(source.tracks.map(sourceKey));
+      state.processed = Object.fromEntries(Object.entries(recover?.processed || {}).filter(([key, value]) => value === 'ignored' && sourceKeys.has(key)));
+      state.pending = (recover?.pendingItems || []).filter(item => sourceKeys.has(sourceKey(item.source)) && !state.processed[sourceKey(item.source)]).map(item => ({...item, resolved: false}));
+      name = name || recover?.destinationName;
       await checkpoint();
-      const dest = await api(`/${kind}/playlist`, { method: 'POST', body: { name } });
+      const dest = await api(`/${kind}/playlist`, { method: 'POST', body: { name, expectedAccountId: accountId } });
       state.destination = { id: dest.id, url: dest.url, name: dest.name || name };
       state.record = {
         id: crypto.randomUUID(), createdAt: new Date().toISOString(),
-        direction: state.direction, sourceInput: state.sourceInput, sourceId: source.id
+        direction: state.direction, sourceInput: state.sourceInput, sourceId: source.id,
+        destinationAccountId: dest.accountId || accountId
       };
+      saveProgress('running');
+      if (recover && store.load().find(record => record.id === recover.id)?.status === 'destination-unavailable') {
+        store.save({...recover, status: 'destination-unavailable', replacementId: state.record.id, updatedAt: new Date().toISOString()});
+      }
       log(`✓ Playlist “${name}” criada no ${kind === 'youtube' ? 'YouTube' : 'Spotify'}`, 'ok');
     }
     saveProgress('running');
@@ -386,9 +459,9 @@
       saveProgress();
       try {
         if (kind === 'youtube') {
-          await api('/youtube/playlist/item', { method: 'POST', body: { playlistId: state.destination.id, videoId: fresh[0].candidate.id } });
+          await api('/youtube/playlist/item', { method: 'POST', body: { playlistId: state.destination.id, videoId: fresh[0].candidate.id, expectedAccountId: state.record.destinationAccountId } });
         } else {
-          await api('/spotify/playlist/items', { method: 'POST', body: { playlistId: state.destination.id, uris: fresh.map(entry => entry.candidate.uri) } });
+          await api('/spotify/playlist/items', { method: 'POST', body: { playlistId: state.destination.id, uris: fresh.map(entry => entry.candidate.uri), expectedAccountId: state.record.destinationAccountId } });
         }
         fresh.forEach(entry => state.usedIds.add(entry.candidate.id));
       } catch (error) {
@@ -476,6 +549,7 @@
     const source = await api(`/spotify/playlist?input=${encodeURIComponent(sourceInput)}`);
     if (!source.tracks.length) throw new Error('A playlist do Spotify não possui faixas disponíveis para migrar.');
     log(`✓ ${source.tracks.length} faixas carregadas do Spotify`, 'ok');
+    progress(0, source.tracks.length);
     if (source.truncated) log('⚠ Playlist muito grande: esta sessão processará apenas as primeiras 2.000 faixas.', 'warn');
 
     await prepareDestination('youtube', source, name);
@@ -520,6 +594,7 @@
     const source = await api(`/youtube/playlist?input=${encodeURIComponent(sourceInput)}`);
     if (!source.tracks.length) throw new Error('A playlist do YouTube não possui vídeos disponíveis para migrar.');
     log(`✓ ${source.tracks.length} itens carregados do YouTube`, 'ok');
+    progress(0, source.tracks.length);
     if (source.truncated) log('⚠ Playlist muito grande: esta sessão processará apenas as primeiras 2.000 faixas.', 'warn');
 
     await prepareDestination('spotify', source, name);
@@ -649,13 +724,15 @@
     const sourceInput = ui.input.value.trim();
     const name = ui.name.value.trim();
     if (!sourceInput) return showToast('Cole o link ou ID da playlist.', true);
-    if (!name && !store.find(state.direction, sourceInput)) return showToast('Digite o nome da playlist de destino.', true);
+    if (!name && !savedDestination(sourceInput)) return showToast('Digite o nome da playlist de destino.', true);
     if (!state.session?.spotify?.connected || !state.session?.youtube?.connected) return showToast('Conecte Spotify e Google / YouTube antes de iniciar.', true);
 
     state.sourceInput = sourceInput;
     state.running = true; state.paused = false; state.cancelled = false; resetRun();
     ui.start.disabled = true; ui.pause.disabled = false; ui.cancel.disabled = false; ui.directions.forEach(x => x.disabled = true);
     try {
+      await loadSession(true);
+      if (!state.session?.spotify?.connected || !state.session?.youtube?.connected) throw new Error('Conecte Spotify e Google / YouTube antes de iniciar.');
       if (state.direction === 'spotify-youtube') await spotifyToYoutube(sourceInput, name);
       else await youtubeToSpotify(sourceInput, name);
       await checkpoint();
