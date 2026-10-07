@@ -38,7 +38,7 @@ from ytmusicapi import YTMusic
 # ============================== CAMINHOS & CONFIGURAÇÕES ======================
 APP_NAME = 'RHYFT'
 LEGACY_APP_NAME = 'MigradorPlaylists'
-APP_VERSION = '1.5.1'
+APP_VERSION = '1.5.2'
 TAMANHO_LOTE = 10          # quantas músicas por envio ao YouTube Music (cada lote é conferido depois)
 TOLERANCIA_DURACAO = 15    # segundos de diferença aceitos entre Spotify e YouTube
 PAUSA_BUSCA_SPOTIFY = 0.4  # segundos entre uma busca e outra no Spotify (YouTube ➔ Spotify)
