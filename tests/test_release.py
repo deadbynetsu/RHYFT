@@ -14,6 +14,7 @@ class ReleaseSafetyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_version(version)
         validate_version('1.5.0')
+        validate_version('1.5.1')
 
     def test_both_platforms_and_matching_hashes_required(self):
         with tempfile.TemporaryDirectory() as folder:
