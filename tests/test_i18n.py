@@ -78,7 +78,7 @@ class LocalizationTests(unittest.TestCase):
     def test_versions_and_syntax(self):
         import tomllib
         project = tomllib.loads((ROOT / 'celular/pyproject.toml').read_text(encoding='utf-8'))
-        self.assertEqual(project['project']['version'], '1.5.1')
+        self.assertEqual(project['project']['version'], '1.5.2')
         tree = ast.parse((ROOT / 'nucleo.py').read_text(encoding='utf-8'))
         values = {n.targets[0].id: n.value.value for n in tree.body if isinstance(n, ast.Assign)
                   and isinstance(n.targets[0], ast.Name) and isinstance(n.value, ast.Constant)}

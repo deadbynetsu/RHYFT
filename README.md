@@ -43,7 +43,7 @@ Quando uma correspondência não é confiável, o RHYFT não escolhe no escuro: 
 | 🪟 **Windows** | App nativo em um único `RHYFT.exe`, progresso, pausa/retomada e histórico local | [Baixar RHYFT.exe](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe) |
 | 🤖 **Android** | Interface mobile, autenticação de contas e migração direto pelo celular | [Baixar APK](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk) |
 
-Os builds oficiais de Windows e Android são gerados pelo **GitHub Actions**. A publicação conjunta só ocorre após os testes e os dois builds passarem no mesmo commit. Releases já publicadas não são sobrescritas. Veja o [changelog](CHANGELOG.md) e as [notas da v1.5.1](releases/v1.5.1.md).
+Os builds oficiais de Windows e Android são gerados pelo **GitHub Actions**. A publicação conjunta só ocorre após os testes e os dois builds passarem no mesmo commit. Releases já publicadas não são sobrescritas. Veja o [changelog](CHANGELOG.md) e as [notas da v1.5.2](releases/v1.5.2.md).
 
 ---
 

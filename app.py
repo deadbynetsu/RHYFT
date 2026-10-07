@@ -489,7 +489,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
 
         # Linha 0: cabeçalho
         cab = ctk.CTkFrame(self, fg_color='transparent')
-        cab.grid(row=0, column=0, padx=24, pady=(20, 4), sticky='ew')
+        cab.grid(row=0, column=0, padx=24, pady=(12, 2), sticky='ew')
         cab.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(cab, text='', image=imagem_logo(46), width=46, height=46).grid(
             row=0, column=0, rowspan=2, padx=(0, 14))
@@ -527,7 +527,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
 
         # Linha 1: contas
         contas = ctk.CTkFrame(self, fg_color='transparent')
-        contas.grid(row=1, column=0, padx=24, pady=(14, 0), sticky='ew')
+        contas.grid(row=1, column=0, padx=24, pady=(8, 0), sticky='ew')
         contas.grid_columnconfigure((0, 1), weight=1, uniform='contas')
         self.lbl_status_spotify, self.btn_spotify = self._criar_cartao_conta(
             contas, 0, 'spotify', '#1ED760', 'Spotify', self.abrir_janela_spotify)
@@ -536,7 +536,7 @@ class MigradorApp(MotorMigracao, ctk.CTk):
 
         # Linha 2: nova migração
         form = cartao(self)
-        form.grid(row=2, column=0, padx=24, pady=(12, 0), sticky='ew')
+        form.grid(row=2, column=0, padx=24, pady=(8, 0), sticky='ew')
         form.grid_columnconfigure((0, 1), weight=1, uniform='campos')
 
         self._rotulos_modo = {'Spotify  ➔  YouTube Music': 'sp_yt', 'YouTube Music  ➔  Spotify': 'yt_sp'}
@@ -546,83 +546,83 @@ class MigradorApp(MotorMigracao, ctk.CTk):
             unselected_hover_color='#262A44', selected_color=COR_ROXO, selected_hover_color='#7C4DEB',
             text_color=COR_TEXTO)
         self.seg_modo.set('Spotify  ➔  YouTube Music')
-        self.seg_modo.grid(row=0, column=0, columnspan=2, sticky='w', padx=18, pady=(16, 0))
+        self.seg_modo.grid(row=0, column=0, columnspan=2, sticky='w', padx=18, pady=(10, 0))
 
         # entry_spotify = link/ID da playlist de ORIGEM; entry_yt = nome da playlist nova (DESTINO)
         self.lbl_campo_origem = ctk.CTkLabel(form, text=tr('Link ou ID da playlist do Spotify'), font=fonte(12, 'bold'),
                                              text_color=COR_TEXTO_2, anchor='w')
-        self.lbl_campo_origem.grid(row=1, column=0, sticky='w', padx=(18, 8), pady=(14, 4))
+        self.lbl_campo_origem.grid(row=1, column=0, sticky='w', padx=(18, 8), pady=(8, 3))
         self.entry_spotify = campo_texto(form, 'https://open.spotify.com/playlist/...')
         self.entry_spotify.grid(row=2, column=0, sticky='ew', padx=(18, 8))
 
         self.lbl_campo_destino = ctk.CTkLabel(form, text=tr('Nome da nova playlist no YouTube Music'),
                                               font=fonte(12, 'bold'), text_color=COR_TEXTO_2, anchor='w')
-        self.lbl_campo_destino.grid(row=1, column=1, sticky='w', padx=(8, 18), pady=(14, 4))
+        self.lbl_campo_destino.grid(row=1, column=1, sticky='w', padx=(8, 18), pady=(8, 3))
         self.entry_yt = campo_texto(form, tr('Minha Playlist Importada'))
         self.entry_yt.grid(row=2, column=1, sticky='ew', padx=(8, 18))
 
         acoes = ctk.CTkFrame(form, fg_color='transparent')
-        acoes.grid(row=3, column=0, columnspan=2, sticky='ew', padx=18, pady=(16, 18))
+        acoes.grid(row=3, column=0, columnspan=2, sticky='ew', padx=18, pady=(10, 12))
         acoes.grid_columnconfigure(3, weight=1)
         self.btn_iniciar = botao(acoes, tr('Iniciar migração'), 'play', 'primario',
-                                 self.iniciar_thread, altura=42, largura=176)
+                                 self.iniciar_thread, altura=38, largura=176)
         self.btn_iniciar.grid(row=0, column=0, padx=(0, 8))
         self.btn_pausar = botao(acoes, tr('Pausar'), 'pause', 'secundario',
-                                self.pausar_migracao, altura=42, largura=116)
+                                self.pausar_migracao, altura=38, largura=116)
         self.btn_pausar.grid(row=0, column=1, padx=8)
         self.btn_cancelar = botao(acoes, tr('Cancelar'), 'stop', 'perigo',
-                                  self.cancelar_migracao, altura=42, largura=122)
+                                  self.cancelar_migracao, altura=38, largura=122)
         self.btn_cancelar.grid(row=0, column=2, padx=8)
         self.btn_historico = botao(acoes, tr('Histórico'), 'clock', 'fantasma',
-                                   self.abrir_janela_historico, altura=42, largura=122)
+                                   self.abrir_janela_historico, altura=38, largura=122)
         self.btn_historico.grid(row=0, column=4, sticky='e')
         definir_ativo(self.btn_pausar, False)
         definir_ativo(self.btn_cancelar, False)
 
         # Linha 3: progresso
         prog = cartao(self)
-        prog.grid(row=3, column=0, padx=24, pady=(12, 0), sticky='ew')
+        prog.grid(row=3, column=0, padx=24, pady=(8, 0), sticky='ew')
         prog.grid_columnconfigure(0, weight=1)
         self.lbl_prog_titulo = ctk.CTkLabel(prog, text='', font=fonte(15, 'bold'),
                                             text_color=COR_TEXTO, anchor='w')
-        self.lbl_prog_titulo.grid(row=0, column=0, sticky='w', padx=(18, 8), pady=(14, 0))
+        self.lbl_prog_titulo.grid(row=0, column=0, sticky='w', padx=(18, 8), pady=(10, 0))
         self.lbl_prog_detalhe = ctk.CTkLabel(prog, text='', font=fonte(12),
                                              text_color=COR_TEXTO_2, anchor='w')
         self.lbl_prog_detalhe.grid(row=1, column=0, sticky='w', padx=(18, 8))
         self.lbl_pct = ctk.CTkLabel(prog, text='0%', font=fonte(30, 'bold'),
                                     text_color=COR_TEAL, anchor='e')
-        self.lbl_pct.grid(row=0, column=1, rowspan=2, sticky='e', padx=(8, 18), pady=(10, 0))
+        self.lbl_pct.grid(row=0, column=1, rowspan=2, sticky='e', padx=(8, 18), pady=(6, 0))
         self.barra = BarraProgresso(prog, altura=14)
-        self.barra.grid(row=2, column=0, columnspan=2, sticky='ew', padx=18, pady=(10, 18))
+        self.barra.grid(row=2, column=0, columnspan=2, sticky='ew', padx=18, pady=(6, 12))
         self._ui_progresso_reset()
 
         # Linha 4: registro
-        self.log_box = ctk.CTkTextbox(self, state='disabled', font=fonte_mono(12), wrap='word',
+        self.log_box = ctk.CTkTextbox(self, state='disabled', font=fonte_mono(12), wrap='word', height=150,
                                       fg_color=COR_CARTAO, text_color='#C9CEE6', corner_radius=14,
                                       border_width=1, border_color=COR_BORDA)
-        self.log_box.grid(row=4, column=0, padx=24, pady=(12, 0), sticky='nsew')
+        self.log_box.grid(row=4, column=0, padx=24, pady=(8, 0), sticky='nsew')
         self.log_box.tag_config('erro', foreground=COR_ERRO)
         self.log_box.tag_config('sucesso', foreground=COR_OK)
         self.log_box.tag_config('aviso', foreground=COR_AVISO)
         self.log_box.tag_config('info', foreground='#7DD3FC')
         self.log_box.tag_config('cinza', foreground='#7C829D')
 
-        # Linha 5: rodapé com crédito e redes
+        # Linha 5: rodapé compacto; deixa mais altura livre para o registro.
         rodape = ctk.CTkFrame(self, fg_color='transparent')
-        rodape.grid(row=5, column=0, padx=24, pady=(12, 16), sticky='ew')
+        rodape.grid(row=5, column=0, padx=24, pady=(8, 10), sticky='ew')
         rodape.grid_columnconfigure(0, weight=1)
         self.lbl_rodape = ctk.CTkLabel(rodape, text=tr('Feito por deadbynetsu'), font=fonte(12),
                                        text_color=COR_TEXTO_2, anchor='w')
         self.lbl_rodape.grid(row=0, column=0, sticky='w')
         from desktop_language import open_language_settings
-        botao(rodape, tr('Idioma'), None, 'secundario',
-              lambda: open_language_settings(self, DATA_DIR), altura=32, largura=90).grid(
-                  row=1, column=0, sticky='w', pady=(8, 0))
+        self.btn_idioma = botao(rodape, tr('Idioma'), None, 'secundario',
+                                 lambda: open_language_settings(self, DATA_DIR), altura=30, largura=90)
+        self.btn_idioma.grid(row=0, column=1, sticky='e', padx=(12, 10))
         redes = ctk.CTkFrame(rodape, fg_color='transparent')
-        redes.grid(row=0, column=1, sticky='e')
+        redes.grid(row=0, column=2, sticky='e')
         for i, (nome, nome_icone, url, cor, largura) in enumerate(LINKS_SOCIAIS):
             botao(redes, nome, nome_icone, 'secundario', lambda u=url: webbrowser.open(u),
-                  altura=32, largura=largura, cor_icone=cor).grid(row=0, column=i, padx=(0 if i == 0 else 6, 0))
+                  altura=30, largura=largura, cor_icone=cor).grid(row=0, column=i, padx=(0 if i == 0 else 6, 0))
 
         self.after(100, self._processar_fila)
         migrar_arquivos_antigos()
@@ -680,11 +680,11 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         cx.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(cx, text='', image=icone(nome_icone, cor_icone, 26), width=46, height=46,
                      fg_color=COR_CARTAO_2, corner_radius=12).grid(
-            row=0, column=0, rowspan=2, padx=(14, 12), pady=14)
+            row=0, column=0, rowspan=2, padx=(14, 12), pady=10)
         ctk.CTkLabel(cx, text=titulo, font=fonte(14, 'bold'), text_color=COR_TEXTO,
-                     anchor='w').grid(row=0, column=1, sticky='sw', pady=(14, 0))
+                     anchor='w').grid(row=0, column=1, sticky='sw', pady=(10, 0))
         status = ctk.CTkLabel(cx, text='', font=fonte(12), anchor='w')
-        status.grid(row=1, column=1, sticky='nw', pady=(0, 14))
+        status.grid(row=1, column=1, sticky='nw', pady=(0, 10))
         btn = botao(cx, tr('Vincular'), 'link', 'secundario', comando, altura=34, largura=112)
         btn.grid(row=0, column=2, rowspan=2, padx=(8, 14))
         return status, btn
