@@ -70,8 +70,11 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
     }
-    const attempts = init.method === 'GET' ? 2 : 1;
+    const context = requestContext(path, init.method);
+    let attempts = init.method === 'GET' ? context.operation === 'search' ? 3 : 2 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      if (state.running) await checkpoint();
+      let retryDelay = 500;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 30000);
       try {
@@ -90,6 +93,7 @@
           err.status = response.status;
           err.details = data?.details;
           err.retryable = data?.retryable;
+          if (isRateLimited(err)) err.message = 'A plataforma limitou temporariamente as requisições. É preciso aguardar antes de tentar novamente.';
           if (/^(?:(?:the )?(?:operation|request) (?:was |has been )?)?(?:aborted|cancelled|canceled)[.!]?$/i.test(err.message.trim())) {
             err.message = err.code === 'PROVIDER_TIMEOUT'
               ? 'A plataforma não respondeu dentro do prazo. Retome para tentar novamente.'
@@ -112,18 +116,44 @@
           error.code = timeout ? 'WEB_TIMEOUT' : aborted ? 'WEB_ABORTED' : 'WEB_NETWORK';
           error.details = timeout ? {timeoutMs: 30000} : {};
         }
-        error.context = requestContext(path, init.method);
+        error.context = context;
         error.attempts = attempt + 1;
+        if (isRateLimited(error) && init.method === 'GET') {
+          attempts = 3;
+          retryDelay = Math.max(3000 * 2 ** attempt, Number(error.details?.retryAfterMs) || 0);
+        }
         if (!isTemporary(error) || attempt + 1 === attempts) throw error;
-        if (state.running || state.reviewing) log(`⚠ ${describeFailure(error)} Nova tentativa de leitura (${attempt + 2}/${attempts})…`, 'warn');
+        if (state.running || state.reviewing) log(`⚠ ${describeFailure(error)} Aguardando ${Math.ceil(retryDelay / 1000)}s. Nova tentativa de leitura (${attempt + 2}/${attempts})…`, 'warn');
       } finally { clearTimeout(timer); }
-      await sleep(500);
-      if (state.running) await checkpoint();
+      await waitForRetry(retryDelay);
     }
   }
 
+  function isRateLimited(error) {
+    const details = error.details || {};
+    if (details.cause === 'quota' || /quota|dailyLimit/i.test(details.reason || '')) return false;
+    return details.cause === 'rate-limit' || /rateLimit/i.test(details.reason || '') || error.status === 429;
+  }
+
   function isTemporary(error) {
-    return typeof error.retryable === 'boolean' ? error.retryable : [500, 502, 503, 504].includes(error.status);
+    return isRateLimited(error) || (typeof error.retryable === 'boolean' ? error.retryable : [500, 502, 503, 504].includes(error.status));
+  }
+
+  async function waitForRetry(ms) {
+    // Short waits keep pause/cancel responsive throughout the backoff.
+    while (ms > 0) {
+      if (state.running) await checkpoint();
+      const step = Math.min(ms, 200);
+      await sleep(step);
+      ms -= step;
+    }
+    if (state.running) await checkpoint();
+  }
+
+  function canDeferSearch(error) {
+    return error.context?.operation === 'search'
+      && (!error.details?.operation || ['search', 'track-details'].includes(error.details.operation))
+      && isTemporary(error) && !state.inFlight.length;
   }
 
   function connectedCard(provider, info) {
@@ -432,8 +462,9 @@
           state.skipped++; log('  ! Nenhum resultado útil encontrado.', 'warn');
         }
       } catch (error) {
-        if (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /quota|cota|limit|salvar o progresso/i.test(error.message)) throw error;
+        if (!canDeferSearch(error) && (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /quota|cota|limit|salvar o progresso/i.test(error.message))) throw error;
         state.skipped++; log(`  ✕ ${describeFailure(error)}`, 'error');
+        if (canDeferSearch(error)) log('  ↳ Busca falhou após 3 tentativas. Esta faixa ficou para tentar ao retomar; seguindo com as próximas.', 'warn');
         saveProgress();
       }
       progress(i + 1, total, track.name);
@@ -492,8 +523,9 @@
           state.skipped++; log('  ! Nenhum resultado útil encontrado.', 'warn');
         }
       } catch (error) {
-        if (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /salvar o progresso/i.test(error.message)) throw error;
+        if (!canDeferSearch(error) && (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /salvar o progresso/i.test(error.message))) throw error;
         state.skipped++; log(`  ✕ ${describeFailure(error)}`, 'error');
+        if (canDeferSearch(error)) log('  ↳ Busca falhou após 3 tentativas. Esta faixa ficou para tentar ao retomar; seguindo com as próximas.', 'warn');
         saveProgress();
       }
       progress(i + 1, total, track.name);

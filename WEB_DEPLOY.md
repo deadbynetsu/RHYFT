@@ -25,6 +25,8 @@ A busca separa créditos de artistas do título, reconhece canais Topic/VEVO e i
 
 Leituras que falham temporariamente têm tentativas limitadas. Envios não são repetidos automaticamente: uma falha pode ocorrer depois de a plataforma aceitar a faixa. Nesse caso, o site confere o destino e interrompe se não conseguir confirmar o envio. Cotas e autorizações continuam dependendo das plataformas. Limpar o histórico ou trocar de navegador remove a informação local necessária para localizar o destino.
 
+Buscas têm até **três tentativas**. Para `rateLimitExceeded`, `userRateLimitExceeded` ou HTTP 429 sem motivo de cota esgotada, a Web aguarda 3s e depois 6s entre as tentativas, respeitando um `Retry-After` maior. A espera permite pausar ou cancelar. Se a busca ainda falhar, a faixa fica com erro para tentar novamente na retomada, e a migração segue com as próximas; as faixas já confirmadas não são reenviadas. O servidor deixa a espera por limite temporário para o navegador, sem multiplicar essas três tentativas. `quotaExceeded` e `dailyLimitExceeded` indicam cota esgotada e interrompem a migração. Falhas de sessão, criação ou envio também não são tratadas como uma busca que pode ser pulada.
+
 O log identifica a etapa e a plataforma que falharam, com HTTP, código do erro, motivo enviado pela API e número de tentativas. Um timeout local informa seu prazo; uma resposta `ABORTED` indica interrupção sem presumir timeout ou cota. Falhas durante a consulta dos detalhes de vídeos e a renovação de sessão também recebem contexto. As tentativas de leitura e a conferência de um envio sem resposta aparecem no log. URLs de requisição, tokens e cookies não fazem parte desses detalhes.
 
 ## Testes da versão Web

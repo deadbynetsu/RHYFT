@@ -140,8 +140,9 @@ function providerMessage(provider, status, data) {
   if (provider === 'google') {
     const reason = data?.error?.errors?.[0]?.reason || data?.error?.status || '';
     const message = data?.error?.message || data?.error_description || (typeof data?.error === 'string' ? data.error : '');
-    if (/quota|dailyLimit/i.test(`${reason} ${message || ''}`)) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
+    if (/quota|dailyLimit/i.test(reason)) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
     if (status === 429 || /rateLimit/i.test(reason)) return 'O YouTube limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
+    if (/quota|dailyLimit/i.test(message || '')) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
     if (status === 401) return 'A sessão do Google expirou ou foi revogada. Conecte o Google / YouTube novamente.';
     if (status === 403) return message || 'O Google recusou esta operação. Verifique as permissões concedidas ao aplicativo.';
     return message || `O Google respondeu com erro ${status}.`;
@@ -175,6 +176,13 @@ function providerReason(data) {
   return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : undefined;
 }
 
+function retryAfterMs(response) {
+  const value = response.headers?.get('retry-after');
+  if (!value) return undefined;
+  const delay = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) && delay >= 0 ? Math.ceil(delay) : undefined;
+}
+
 async function providerFetch(url, options, provider) {
   // Only reads can be repeated safely. A failed POST may already have been applied.
   const context = providerContext(url, options, provider);
@@ -189,7 +197,9 @@ async function providerFetch(url, options, provider) {
       if (!response.ok) {
         const reason = providerReason(data);
         const originalMessage = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.error === 'string' ? data.error : '';
-        const accessOrLimit = [401, 403, 429].includes(response.status) || /quota|dailyLimit|rateLimit/i.test(reason || '');
+        const quota = /quota|dailyLimit/i.test(reason || '');
+        const rateLimit = !quota && (response.status === 429 || /rateLimit/i.test(reason || ''));
+        const accessOrLimit = [401, 403].includes(response.status) || quota || rateLimit;
         const aborted = !accessOrLimit && (reason === 'ABORTED' || /\b(?:aborted|cancelled|canceled)\b/i.test(originalMessage || data?.raw || ''));
         const timeout = !accessOrLimit && reason === 'DEADLINE_EXCEEDED';
         const genericAbort = /^(?:(?:the )?(?:operation|request) (?:was |has been )?)?(?:aborted|cancelled|canceled)[.!]?$/i;
@@ -199,9 +209,11 @@ async function providerFetch(url, options, provider) {
             : `O ${label} interrompeu a operação antes de concluir; não informou o motivo da interrupção.`
           : providerMessage(provider, response.status, data);
         const error = new HttpError(response.status, message, `${provider.toUpperCase()}_${response.status}`,
-          { ...context, cause: timeout ? 'timeout' : aborted ? 'aborted' : 'http', upstreamStatus: response.status, reason, attempts: attempt + 1 });
-        // Access/quota errors must remain final even if their message mentions an abort.
-        error.retryable = !accessOrLimit && ([500, 502, 503, 504].includes(response.status) || aborted || timeout);
+          { ...context, cause: quota ? 'quota' : rateLimit ? 'rate-limit' : timeout ? 'timeout' : aborted ? 'aborted' : 'http',
+            upstreamStatus: response.status, reason, attempts: attempt + 1,
+            ...(rateLimit ? {retryAfterMs: retryAfterMs(response)} : {}) });
+        // The browser schedules rate-limit retries so waiting remains pausable.
+        error.retryable = rateLimit || !accessOrLimit && ([500, 502, 503, 504].includes(response.status) || aborted || timeout);
         throw error;
       }
       if (!data || typeof data !== 'object' || Array.isArray(data) || data.raw !== undefined) {
@@ -212,6 +224,7 @@ async function providerFetch(url, options, provider) {
       }
       return data;
     } catch (error) {
+      if (error.details?.cause === 'rate-limit') throw error;
       const temporary = !(error instanceof HttpError) || error.retryable;
       if (!temporary) throw error;
       if (attempt + 1 === attempts) {
@@ -265,7 +278,7 @@ async function refreshSpotify(session) {
   try {
     data = await providerFetch(`${SPOTIFY_ACCOUNTS}/api/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }, 'spotify');
   } catch (error) {
-    if ([400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Spotify. Conecte novamente.', 'AUTH_REQUIRED', error.details);
+    if (error.details?.cause !== 'rate-limit' && [400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Spotify. Conecte novamente.', 'AUTH_REQUIRED', error.details);
     throw error;
   }
   return { ...session, ...data, client_id: clientId, refresh_token: data.refresh_token || session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
@@ -298,7 +311,7 @@ async function refreshGoogle(session) {
   try {
     data = await providerFetch(GOOGLE_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }, 'google');
   } catch (error) {
-    if ([400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Google. Conecte novamente.', 'AUTH_REQUIRED', error.details);
+    if (error.details?.cause !== 'rate-limit' && [400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Google. Conecte novamente.', 'AUTH_REQUIRED', error.details);
     throw error;
   }
   return { ...session, ...data, refresh_token: session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };

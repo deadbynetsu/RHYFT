@@ -40,7 +40,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   const candidates = options.candidates || tracks.map((track, i) => ({id: `Music12345${i}`, title: track.name, name: track.name,
     channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`, url: `https://www.youtube.com/watch?v=Music12345${i}`}));
   const remote = new Set(options.existing ? [candidates[0].id] : []);
-  const stats = {creates: 0, writes: [], searches: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false};
+  const stats = {creates: 0, writes: [], searches: [], searchTimes: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false};
   const historyRecord = {id: 'legacy-history', createdAt: new Date().toISOString(), direction,
     sourceInput: sourceId, destinationName: 'Destino antigo', destinationUrl: destUrl, added: 1, pending: 0, skipped: 1, status: 'completed'};
   if (options.legacyPending) {
@@ -74,15 +74,17 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
     }
     if (url.pathname === `/api/${target}/search`) {
       const query = url.searchParams.get('q'); stats.searches.push(query);
+      stats.searchTimes.push(Date.now());
       if (stats.searchGate) await stats.searchGate;
-      if (stats.searchFailure && query.includes('Tempestade')) {
+      if (stats.searchFailure && query.includes('Tempestade') && (stats.searchFailure.remaining === undefined || stats.searchFailure.remaining > 0)) {
+        if (stats.searchFailure.remaining !== undefined) stats.searchFailure.remaining--;
         if (stats.searchFailure.html) return route.fulfill({status: 504, contentType: 'text/html', body: '<html>Gateway timeout</html>'});
         return json(stats.searchFailure.data, stats.searchFailure.status);
       }
       if ((stats.pendingSearch || (stats.weakPrimary && !query.includes('"'))) && query.includes('Horizonte')) return json({items: [{...candidates[0], name: 'Outra música', title: 'Outra música', artists: ['Outro'], channel: 'Outro'}]});
       if (stats.transientSearch) {stats.transientSearch = false; return json({error: 'The operation was aborted.', code: 'PROVIDER_TIMEOUT'}, 504);}
       if (stats.failSearch && query.includes('Tempestade')) return json({error: 'The operation was aborted.', code: 'PROVIDER_TIMEOUT'}, 504);
-      return json({items: [candidates[query.includes('Tempestade') ? 1 : 0]]});
+      return json({items: [candidates[Math.max(0, tracks.findIndex(track => query.includes(track.name)))]]});
     }
     if (url.pathname === `/api/${target}/playlist/item` || url.pathname === `/api/${target}/playlist/items`) {
       const body = req.postDataJSON();
@@ -168,8 +170,9 @@ test('an exhausted read failure persists progress and a reload resumes the same 
     const log = await f.page.locator('#live-log').innerText();
     assert.match(log, /Falha ao buscar a música \(YouTube \/ Google\)/);
     assert.match(log, /HTTP 504.*PROVIDER_TIMEOUT/);
-    assert.match(log, /Nova tentativa de leitura \(2\/2\)/);
-    assert.match(log, /progresso foi salvo/);
+    assert.match(log, /Nova tentativa de leitura \(2\/3\)/);
+    assert.match(log, /Busca falhou após 3 tentativas/);
+    assert.equal(saved.skipped, 1);
     assert.doesNotMatch(log, /The operation was aborted/);
     f.stats.failSearch = false;
     await f.page.reload();
@@ -218,7 +221,7 @@ for (const direction of ['spotify-youtube', 'youtube-spotify']) {
   });
 }
 
-test('upstream aborts identify the failing detail request, retry reads and preserve progress', async () => {
+test('upstream aborts identify the failing detail request, exhaust three reads and defer the track', async () => {
   const f = await fixture();
   try {
     f.stats.searchFailure = {status: 409, data: {error: 'The operation was aborted.', code: 'GOOGLE_409', retryable: true,
@@ -226,15 +229,97 @@ test('upstream aborts identify the failing detail request, retry reads and prese
     await f.start();
     const saved = (await f.history())[0];
     assert.equal(saved.status, 'interrupted');
-    assert.equal(saved.skipped, 0);
+    assert.equal(saved.skipped, 1);
     assert.equal(Object.keys(saved.processed).length, 1);
-    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 2);
+    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
     const log = await f.page.locator('#live-log').innerText();
     assert.match(log, /Falha ao consultar os detalhes das músicas \(YouTube \/ Google\)/);
     assert.match(log, /não informou o motivo/);
     assert.match(log, /HTTP 409.*GOOGLE_409.*motivo: ABORTED/);
-    assert.match(log, /tentativas no servidor: 2.*tentativas no navegador: 2/);
+    assert.match(log, /tentativas no servidor: 2.*tentativas no navegador: 3/);
     assert.doesNotMatch(log, /The operation was aborted|prazo:|cota/);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+function rateFailure(provider = 'youtube', retryAfterMs = undefined) {
+  return {status: 429, data: {error: 'A cota do YouTube para este projeto foi atingida.', code: provider === 'youtube' ? 'GOOGLE_429' : 'SPOTIFY_429', retryable: false,
+    details: {provider, operation: 'search', cause: 'rate-limit', reason: 'rateLimitExceeded', attempts: 1, retryAfterMs}}};
+}
+
+test('a temporary rate limit waits and recovers automatically on the third search attempt', async () => {
+  const f = await fixture();
+  try {
+    f.stats.searchFailure = {...rateFailure(), remaining: 2};
+    await f.start();
+    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
+    const times = f.stats.searchTimes.slice(1);
+    assert.ok(times[1] - times[0] >= 2900, 'the first retry must wait');
+    assert.ok(times[2] - times[1] >= 5900, 'the second retry must back off further');
+    assert.equal((await f.history())[0].status, 'completed');
+    assert.equal((await f.history())[0].skipped, 0);
+    assert.equal(f.remote.size, 2);
+    const log = await f.page.locator('#live-log').innerText();
+    assert.match(log, /Aguardando 3s.*\(2\/3\)/);
+    assert.match(log, /Aguardando 6s.*\(3\/3\)/);
+    assert.doesNotMatch(log, /cota.*atingida|Migração interrompida/);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+for (const direction of ['spotify-youtube', 'youtube-spotify']) {
+  test(`${direction}: after three rate limits, continues with later tracks and retries the deferred one on resume`, async () => {
+    const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+    const f = await fixture(direction, {tracks});
+    try {
+      f.stats.searchFailure = rateFailure(direction === 'spotify-youtube' ? 'youtube' : 'spotify');
+      await f.start();
+      assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
+      assert.ok(f.stats.searches.some(q => q.includes('Aurora')));
+      assert.deepEqual(f.stats.writes.flat(), [f.candidates[0].id, f.candidates[2].id]);
+      const saved = (await f.history())[0];
+      assert.equal(saved.status, 'interrupted');
+      assert.equal(saved.skipped, 1);
+      assert.equal(saved.processed[tracks[1].id], undefined, 'a deferred track must remain eligible for retry');
+      assert.match(await f.page.locator('#live-log').innerText(), /Busca falhou após 3 tentativas.*seguindo com as próximas/);
+      f.stats.searchFailure = null;
+      await f.start();
+      assert.equal(f.stats.creates, 1);
+      assert.deepEqual(f.stats.writes.flat(), [f.candidates[0].id, f.candidates[2].id, f.candidates[1].id]);
+      assert.equal((await f.history())[0].status, 'completed');
+      assert.equal((await f.history())[0].skipped, 0);
+      assert.deepEqual(f.errors, []);
+    } finally {await f.context.close();}
+  });
+}
+
+test('a longer provider Retry-After is respected before retrying a search', async () => {
+  const f = await fixture();
+  try {
+    f.stats.searchFailure = {...rateFailure('youtube', 4000), remaining: 1};
+    await f.start();
+    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 2);
+    assert.ok(f.stats.searchTimes[2] - f.stats.searchTimes[1] >= 3900);
+    assert.match(await f.page.locator('#live-log').innerText(), /Aguardando 4s/);
+    assert.equal((await f.history())[0].status, 'completed');
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('pause and cancel stay responsive while waiting after a rate limit', async () => {
+  const f = await fixture();
+  try {
+    f.stats.searchFailure = rateFailure();
+    await f.page.locator('#start-migration').click();
+    await f.page.waitForFunction(() => document.querySelector('#live-log').textContent.includes('Aguardando 3s'));
+    await f.page.locator('#pause-migration').click();
+    await f.page.waitForTimeout(3300);
+    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
+    await f.page.locator('#cancel-migration').click();
+    await f.page.waitForFunction(() => !document.querySelector('#start-migration').disabled);
+    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
+    assert.equal((await f.history())[0].status, 'cancelled');
+    assert.equal((await f.history())[0].added, 1);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });

@@ -136,7 +136,7 @@ for (const reason of ['quotaExceeded', 'rateLimitExceeded']) {
     let calls = 0;
     const api = backend(async () => {calls++; return response(403, {error: {message: 'The operation was aborted.', errors: [{reason}]}});});
     await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
-      assert.equal(error.retryable, false);
+      assert.equal(error.retryable, reason === 'rateLimitExceeded');
       assert.equal(error.details.reason, reason);
       assert.match(error.message, reason === 'quotaExceeded' ? /cota/ : /limitou temporariamente/);
       return true;
@@ -144,6 +144,49 @@ for (const reason of ['quotaExceeded', 'rateLimitExceeded']) {
     assert.equal(calls, 1);
   });
 }
+
+for (const status of [403, 429]) {
+  test(`a ${status} rate limit takes precedence over a generic quota message and returns Retry-After`, async () => {
+    let calls = 0;
+    const api = backend(async () => {
+      calls++;
+      return new Response(JSON.stringify({error: {message: 'Quota exceeded for requests per minute.', errors: [{reason: 'rateLimitExceeded'}]}}),
+        {status, headers: {'Retry-After': '5'}});
+    });
+    await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+      assert.equal(error.status, status);
+      assert.equal(error.retryable, true);
+      assert.equal(error.details.cause, 'rate-limit');
+      assert.equal(error.details.retryAfterMs, 5000);
+      assert.match(error.message, /limitou temporariamente/);
+      assert.doesNotMatch(error.message, /cota/);
+      return true;
+    });
+    assert.equal(calls, 1, 'the browser schedules the retries; the server must not double them');
+  });
+}
+
+test('a Retry-After date is forwarded as a waiting period', async () => {
+  const date = new Date(Date.now() + 15000).toUTCString();
+  const api = backend(async () => new Response(JSON.stringify({error: {status: 'RESOURCE_EXHAUSTED'}}), {status: 429, headers: {'Retry-After': date}}));
+  await assert.rejects(api.testing.providerFetch('https://api.spotify.com/v1/search', {}, 'spotify'), error => {
+    assert.equal(error.details.cause, 'rate-limit');
+    assert.ok(error.details.retryAfterMs > 12000 && error.details.retryAfterMs <= 15000);
+    return true;
+  });
+});
+
+test('a 429 with an explicit exhausted quota remains final', async () => {
+  let calls = 0;
+  const api = backend(async () => {calls++; return response(429, {error: {errors: [{reason: 'quotaExceeded'}]}});});
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+    assert.equal(error.retryable, false);
+    assert.equal(error.details.cause, 'quota');
+    assert.match(error.message, /cota/);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
 
 test('a refresh connection failure retains authentication context instead of becoming an internal error', async () => {
   let calls = 0;
