@@ -22,6 +22,15 @@ class DesktopLanguageTests(unittest.TestCase):
                 subprocess.run([sys.executable, str(root / 'tests/smoke_desktop.py')],
                                cwd=root, env=env, check=True, timeout=20, capture_output=True)
 
+    def test_first_run_transitions_to_main_window(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, MIGRADOR_DATA_DIR=directory, RHYFT_TEST_LANGUAGE='en', PYTHONUTF8='1')
+            result = subprocess.run(
+                [sys.executable, str(root / 'tests/smoke_first_run.py')],
+                cwd=root, env=env, check=True, timeout=30, capture_output=True, text=True)
+            self.assertIn('FIRST_RUN_OK', result.stdout)
+
     def test_select_save_and_cancel_timers(self):
         from desktop_language import LanguageDialog
         with tempfile.TemporaryDirectory() as directory:
