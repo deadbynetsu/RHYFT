@@ -7,6 +7,9 @@
   let pacingStorage;
   try { pacingStorage = localStorage; } catch {}
   const pacing = window.RhyftProviderPacing.create({storage: pacingStorage});
+  let searchStorage;
+  try { searchStorage = sessionStorage; } catch {}
+  const searchCache = window.RhyftSearchCache.create({storage: searchStorage});
 
   const ui = {
     spotifyStatus: $('#spotify-status'), spotifyDetail: $('#spotify-detail'), spotifyConnect: $('#spotify-connect'), spotifyLogout: $('#spotify-logout'),
@@ -58,6 +61,8 @@
     if (technical) {
       const codes = [`HTTP ${error.status}`, error.code];
       if (details.reason) codes.push(`motivo: ${details.reason}`);
+      if (details.limitScope) codes.push(`limite: ${ {day: 'por dia', minute: 'por minuto', second: 'por segundo'}[details.limitScope] || details.limitScope}`);
+      if (details.limitName) codes.push(`cota: ${details.limitName}`);
       if (details.upstreamStatus && details.upstreamStatus !== error.status) codes.push(`plataforma: HTTP ${details.upstreamStatus}`);
       if (details.timeoutMs) codes.push(`prazo: ${details.timeoutMs / 1000}s`);
       if (details.attempts) codes.push(`tentativas no servidor: ${details.attempts}`);
@@ -239,6 +244,7 @@
   async function logout(provider) {
     try {
       await api('/logout', { method: 'POST', body: { provider } });
+      searchCache.clear(provider === 'google' ? 'youtube' : 'spotify');
       showToast(`${provider === 'spotify' ? 'Spotify' : 'Google / YouTube'} desconectado.`);
       await loadSession();
     } catch (error) { showToast(error.message, true); }
@@ -439,7 +445,12 @@
     if (ranked[0]?.auto) return ranked;
     for (const query of matching.queries(track, kind)) {
       await checkpoint();
-      const found = await api(`/${kind}/search?q=${encodeURIComponent(query)}`);
+      let found = searchCache.get(kind, query);
+      if (found) log(`♻ Reaproveitando busca salva: ${track.name || track.title}`, 'ok');
+      else {
+        found = await api(`/${kind}/search?q=${encodeURIComponent(query)}`);
+        searchCache.set(kind, query, found);
+      }
       for (const candidate of found.items || []) pool.set(candidate.id, candidate);
       ranked = matching.rank(track, [...pool.values()], kind);
       if (ranked[0]?.auto) break;

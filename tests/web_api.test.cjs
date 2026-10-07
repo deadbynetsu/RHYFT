@@ -61,10 +61,10 @@ test('an upstream ABORTED response preserves its reason and operation without in
   const result = await api.handler(event('youtube/search', {q: 'private-query'}, `g_session=${session}`));
   const data = JSON.parse(result.body);
   assert.equal(result.statusCode, 409);
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.equal(data.code, 'GOOGLE_409');
   assert.equal(data.retryable, true);
-  assert.deepEqual(data.details, {provider: 'youtube', operation: 'search', method: 'GET', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 2});
+  assert.deepEqual(data.details, {provider: 'youtube', operation: 'search', method: 'GET', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 1});
   assert.match(data.error, /interrompeu.*não informou o motivo/);
   assert.doesNotMatch(result.body, /private-fixture-token|private-query|googleapis\.com|cookie|timeoutMs/);
 });
@@ -119,16 +119,16 @@ test('video detail failures identify the actual failing call inside a search', a
   assert.equal(data.details.attempts, 2);
 });
 
-test('a non-JSON provider response is retried without leaking the response body', async () => {
+test('a non-JSON search failure is returned to the browser without leaking or retrying on the server', async () => {
   let calls = 0;
   const api = backend(async () => {calls++; return new Response('<html>private-proxy-details</html>', {status: 200});});
   await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search?q=private', {}, 'google'), error => {
     assert.equal(error.code, 'PROVIDER_INVALID_RESPONSE');
-    assert.equal(error.details.attempts, 2);
+    assert.equal(error.details.attempts, 1);
     assert.doesNotMatch(error.message, /private/);
     return true;
   });
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
 });
 
 for (const reason of ['quotaExceeded', 'rateLimitExceeded']) {
@@ -223,6 +223,78 @@ test('a 429 with an explicit exhausted quota remains final', async () => {
     return true;
   });
   assert.equal(calls, 1);
+});
+
+test('a per-minute quota name outranks incidental daily wording in the message', async () => {
+  const api = backend(async () => response(429, {error: {message: 'Rate limit exceeded. The daily quota resets once per day.', errors: [{reason: 'rateLimitExceeded'}], details: [{
+    '@type': 'type.googleapis.com/google.rpc.ErrorInfo', metadata: {quota_limit: 'QueriesPerMinutePerProject'}
+  }]}}));
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+    assert.equal(error.details.cause, 'rate-limit');
+    assert.equal(error.details.limitScope, 'minute');
+    assert.equal(error.details.limitName, 'QueriesPerMinutePerProject');
+    assert.match(error.message, /limitou temporariamente/);
+    assert.doesNotMatch(error.message, /cota.*esgotada/);
+    return true;
+  });
+});
+
+test('mentioning daily quota does not prove it is exhausted', async () => {
+  const api = backend(async () => response(429, {error: {message: 'Rate limit exceeded. Daily quota resets once per day.', errors: [{reason: 'rateLimitExceeded'}]}}));
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => error.details.cause === 'rate-limit' && !error.details.limitScope);
+});
+
+test('unknown quota-related reasons are not asserted to be an exhausted quota', async () => {
+  const api = backend(async () => response(503, {error: {message: 'Quota service temporarily unavailable.', errors: [{reason: 'quotaServiceUnavailable'}]}}));
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+    assert.equal(error.details.cause, 'http');
+    assert.equal(error.retryable, true);
+    assert.doesNotMatch(error.message, /esgotada|atingida/);
+    return true;
+  });
+});
+
+test('successful YouTube searches are reused in a warm function and isolated by account', async () => {
+  let searches = 0, details = 0;
+  const api = backend(async url => {
+    if (url.includes('/search?')) {searches++; return response(200, {items: [{id: {videoId: 'Video123456'}}]});}
+    details++;
+    return response(200, {items: [{id: 'Video123456', snippet: {title: 'Song', channelTitle: 'Artist'}, contentDetails: {duration: 'PT3M'}}]});
+  });
+  const session = api.testing.seal({access_token: 'test-only', refresh_token: 'account-one', expires_at: Date.now() + 3600000});
+  const request = event('youtube/search', {q: 'Artist Song'}, `g_session=${session}`);
+  assert.equal((await api.handler(request)).statusCode, 200);
+  assert.equal((await api.handler({...request, queryStringParameters: {q: 'artist   song'}})).statusCode, 200);
+  assert.equal(searches, 1);
+  assert.equal(details, 1);
+  const other = api.testing.seal({access_token: 'test-two', refresh_token: 'account-two', expires_at: Date.now() + 3600000});
+  assert.equal((await api.handler({...request, headers: {cookie: `g_session=${other}`}})).statusCode, 200);
+  assert.equal(searches, 2);
+});
+
+test('a failed video-details response does not repeat the paid search on retry', async () => {
+  let searches = 0, details = 0;
+  const api = backend(async url => {
+    if (url.includes('/search?')) {searches++; return response(200, {items: [{id: {videoId: 'Video123456'}}]});}
+    if (++details <= 2) return response(503, {error: {message: 'Unavailable'}});
+    return response(200, {items: [{id: 'Video123456', snippet: {title: 'Song'}, contentDetails: {duration: 'PT3M'}}]});
+  });
+  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const request = event('youtube/search', {q: 'Song'}, `g_session=${session}`);
+  assert.equal((await api.handler(request)).statusCode, 503);
+  assert.equal((await api.handler(request)).statusCode, 200);
+  assert.equal(searches, 1);
+  assert.equal(details, 3);
+});
+
+test('a failed search is tried once per server invocation', async () => {
+  let calls = 0;
+  const api = backend(async () => {calls++; return response(503, {error: {message: 'Unavailable'}});});
+  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const request = event('youtube/search', {q: 'Song'}, `g_session=${session}`);
+  assert.equal((await api.handler(request)).statusCode, 503);
+  assert.equal((await api.handler(request)).statusCode, 503);
+  assert.equal(calls, 2);
 });
 
 test('a refresh connection failure retains authentication context instead of becoming an internal error', async () => {

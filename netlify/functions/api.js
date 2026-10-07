@@ -5,6 +5,7 @@ const SPOTIFY_ACCOUNTS = 'https://accounts.spotify.com';
 const GOOGLE_ACCOUNTS = 'https://accounts.google.com';
 const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 const YOUTUBE_API = 'https://www.googleapis.com/youtube/v3';
+const youtubeSearchCache = new Map();
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/youtube';
 const SPOTIFY_SCOPE = [
   'playlist-read-private',
@@ -142,7 +143,6 @@ function providerMessage(provider, status, data) {
     const message = data?.error?.message || data?.error_description || (typeof data?.error === 'string' ? data.error : '');
     if (limit.kind === 'quota') return 'O Google informou que a cota do YouTube para este projeto foi esgotada. A migração precisa aguardar a liberação dessa cota.';
     if (limit.kind === 'rate-limit') return 'O YouTube limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
-    if (/quota|dailyLimit/i.test(message || '')) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
     if (status === 401) return 'A sessão do Google expirou ou foi revogada. Conecte o Google / YouTube novamente.';
     if (status === 403) return message || 'O Google recusou esta operação. Verifique as permissões concedidas ao aplicativo.';
     return message || `O Google respondeu com erro ${status}.`;
@@ -185,17 +185,35 @@ function googleLimit(data, status) {
   const reason = providerReason(data) || '';
   const details = providerDetails(data);
   // Use explicit limit descriptions, not project/account identifiers in metadata.
-  const descriptions = [data?.error?.message, ...details.flatMap(detail => [detail.metadata?.quota_limit,
-    ...(Array.isArray(detail.violations) ? detail.violations.map(violation => violation.description) : [])])]
-    .filter(value => typeof value === 'string').join(' ');
+  const names = details.map(detail => detail.metadata?.quota_limit).filter(value => typeof value === 'string');
+  const violations = details.flatMap(detail => Array.isArray(detail.violations)
+    ? detail.violations.map(violation => violation?.description).filter(value => typeof value === 'string') : []);
   if (status !== 429 && !/quota|daily[_-]?Limit|rate[_-]?Limit|RESOURCE_EXHAUSTED/i.test(reason)
     && !/quota|rate.limit/i.test(String(data?.error?.message || '')) && !details.some(detail => detail.metadata?.quota_limit)) return {};
-  const scope = /per\s*day|\/day|daily/i.test(descriptions) ? 'day'
-    : /per\s*minute|\/minute|\/min\b/i.test(descriptions) ? 'minute'
-    : /per\s*second|\/second|\/sec\b/i.test(descriptions) ? 'second' : undefined;
-  const quota = scope === 'day' || !scope && /quota|daily[_-]?Limit/i.test(reason);
+  const scopeOf = text => /per\s*day|\/day|daily[\s_]*(?:quota|limit|requests|queries)/i.test(text) ? 'day'
+    : /per\s*minute|\/minute|\/min\b/i.test(text) ? 'minute'
+    : /per\s*second|\/second|\/sec\b/i.test(text) ? 'second' : undefined;
+  // Structured quota names take precedence over incidental words in messages.
+  const scopes = names.map(scopeOf).filter(Boolean);
+  if (!scopes.length) scopes.push(...violations.map(scopeOf).filter(Boolean));
+  if (!scopes.length) {
+    const message = String(data?.error?.message || '');
+    const namedLimit = message.match(/\blimit\s+['"]([^'"]+)['"]/i)?.[1];
+    if (namedLimit) {
+      const scope = scopeOf(namedLimit);
+      if (scope) scopes.push(scope);
+    } else {
+      // Explanatory notes about quota resets don't identify the exhausted limit.
+      const exhausted = message.split(/[.!?;]\s+/).filter(sentence => /\b(?:quota|limit)\b/i.test(sentence)
+        && /\b(?:exceeded|exhausted|depleted|reached)\b/i.test(sentence));
+      scopes.push(...exhausted.map(scopeOf).filter(Boolean));
+    }
+  }
+  const scope = scopes.includes('day') ? 'day' : scopes.includes('minute') ? 'minute' : scopes[0];
+  const quota = scope === 'day' || !scope && /^(?:quotaExceeded|daily[_-]?LimitExceeded|DAILY_LIMIT_EXCEEDED)$/i.test(reason);
   const rate = !quota && (scope === 'minute' || scope === 'second' || status === 429 || /rate[_-]?Limit/i.test(reason));
-  return {kind: quota ? 'quota' : rate ? 'rate-limit' : undefined, scope};
+  const name = names.find(value => /^[A-Za-z][A-Za-z0-9 _./-]{0,159}$/.test(value));
+  return {kind: quota ? 'quota' : rate ? 'rate-limit' : undefined, scope, name};
 }
 
 function retryAfterMs(response, data) {
@@ -215,7 +233,8 @@ function retryAfterMs(response, data) {
 async function providerFetch(url, options, provider) {
   // Only reads can be repeated safely. A failed POST may already have been applied.
   const context = providerContext(url, options, provider);
-  const attempts = context.method === 'GET' ? 2 : 1;
+  // The browser owns search retries. Repeating here would multiply costly searches.
+  const attempts = context.method === 'GET' && context.operation !== 'search' ? 2 : 1;
   const label = provider === 'google' ? 'YouTube / Google' : 'Spotify';
   for (let attempt = 0; attempt < attempts; attempt++) {
     const controller = new AbortController();
@@ -242,6 +261,7 @@ async function providerFetch(url, options, provider) {
           { ...context, cause: quota ? 'quota' : rateLimit ? 'rate-limit' : timeout ? 'timeout' : aborted ? 'aborted' : 'http',
             upstreamStatus: response.status, reason, attempts: attempt + 1,
             ...(limit.scope ? {limitScope: limit.scope} : {}),
+            ...(limit.name ? {limitName: limit.name} : {}),
             ...(rateLimit ? {retryAfterMs: retryAfterMs(response, data)} : {}) });
         // The browser schedules rate-limit retries so waiting remains pausable.
         error.retryable = rateLimit || !accessOrLimit && ([500, 502, 503, 504].includes(response.status) || aborted || timeout);
@@ -544,15 +564,29 @@ async function youtubePlaylistRoute(event) {
 async function youtubeSearchRoute(event) {
   const auth = await googleAuth(event); const q = String(event.queryStringParameters?.q || '').trim().slice(0, 180);
   if (!q) throw new HttpError(400, 'Busca vazia.', 'BAD_QUERY');
-  const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', q });
-  const search = await providerFetch(`${YOUTUBE_API}/search?${params}`, { headers: bearer(auth.accessToken) }, 'google');
-  const ids = (search.items || []).map(x => x.id?.videoId).filter(Boolean);
-  if (!ids.length) return json(200, { items: [] }, auth.setCookies);
-  // A browser search makes two upstream calls; don't send their requests in a burst.
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  // Isolate cached data by account/session, using a digest rather than a token.
+  const account = crypto.createHash('sha256').update(auth.session.refresh_token || auth.accessToken).digest('hex');
+  const cacheKey = `${account}:${q.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')}`;
+  for (const [key, value] of youtubeSearchCache) if (value.expiresAt <= Date.now()) youtubeSearchCache.delete(key);
+  let cached = youtubeSearchCache.get(cacheKey);
+  if (cached?.items) return json(200, {items: cached.items}, auth.setCookies);
+  if (!cached) {
+    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', q });
+    const search = await providerFetch(`${YOUTUBE_API}/search?${params}`, { headers: bearer(auth.accessToken) }, 'google');
+    cached = {ids: (search.items || []).map(x => x.id?.videoId).filter(Boolean), expiresAt: Date.now() + 900000};
+    if (!cached.ids.length) cached.items = [];
+    // Keep the expensive search even if the following metadata call fails.
+    youtubeSearchCache.set(cacheKey, cached);
+    if (youtubeSearchCache.size > 100) youtubeSearchCache.delete(youtubeSearchCache.keys().next().value);
+    if (!cached.ids.length) return json(200, {items: []}, auth.setCookies);
+    // A browser search makes two upstream calls; avoid a burst between them.
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  const ids = cached.ids;
   const details = await providerFetch(`${YOUTUBE_API}/videos?part=snippet,contentDetails&id=${encodeURIComponent(ids.join(','))}`, { headers: bearer(auth.accessToken) }, 'google');
   const map = new Map((details.items || []).map(v => [v.id, v]));
   const items = ids.map(id => map.get(id)).filter(Boolean).map(v => ({ id: v.id, title: v.snippet?.title || '', channel: v.snippet?.channelTitle || '', duration: parseDuration(v.contentDetails?.duration), url: `https://www.youtube.com/watch?v=${v.id}` }));
+  cached.items = items;
   return json(200, { items }, auth.setCookies);
 }
 

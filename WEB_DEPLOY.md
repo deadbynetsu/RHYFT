@@ -31,6 +31,10 @@ Se a busca ainda falhar, a faixa fica com erro para tentar novamente na retomada
 
 A pausa controla as chamadas deste navegador. O projeto Google é compartilhado pelo site, e o uso de outros navegadores também consome seus limites. Se o bloqueio persistir, o responsável deve verificar **YouTube Data API v3 → Quotas e métricas** no Google Cloud para identificar o limite efetivamente atingido; uma cota externa não pode ser ampliada pelo JavaScript.
 
+Buscas concluídas são reaproveitadas na mesma aba por até 6 horas, inclusive após F5; o cache guarda até 100 consultas e é removido para a plataforma desconectada ao sair. Respostas vazias expiram em 5 minutos e falhas não são salvas como resultados. A função também reaproveita buscas por até 15 minutos enquanto a instância estiver ativa, isolando os dados por conta/sessão. Se a consulta dos detalhes falhar, os IDs já encontrados são preservados para que a tentativa seguinte não repita a busca. Uma busca não é repetida dentro do servidor: as três tentativas ficam sob controle do navegador.
+
+O nome estruturado da cota e a unidade do limite têm prioridade sobre palavras soltas na mensagem do Google. O log mostra `motivo`, `limite` e, quando disponível, o nome da `cota`, sem dados de conta. Isso permite distinguir limite diário, bloqueio por minuto/segundo e respostas sem informação suficiente. Recarregar a página não repõe uma cota já consumida no projeto Google. A consulta alternativa continua ocorrendo somente quando a primeira não encontra correspondência clara; pedir dez candidatos usa uma chamada de busca e uma chamada de detalhes em lote, sem uma requisição por candidato.
+
 O log identifica a etapa e a plataforma que falharam, com HTTP, código do erro, motivo enviado pela API e número de tentativas. Um timeout local informa seu prazo; uma resposta `ABORTED` indica interrupção sem presumir timeout ou cota. Falhas durante a consulta dos detalhes de vídeos e a renovação de sessão também recebem contexto. As tentativas de leitura e a conferência de um envio sem resposta aparecem no log. URLs de requisição, tokens e cookies não fazem parte desses detalhes.
 
 ## Testes da versão Web
@@ -38,7 +42,7 @@ O log identifica a etapa e a plataforma que falharam, com HTTP, código do erro,
 Os testes da API usam apenas Node.js 22 ou superior:
 
 ```bash
-node --test tests/web_api.test.cjs tests/web_matching.test.cjs tests/web_pacing.test.cjs
+node --test tests/web_api.test.cjs tests/web_matching.test.cjs tests/web_pacing.test.cjs tests/web_search_cache.test.cjs
 ```
 
 Os testes da interface executam Chromium com Playwright e respostas simuladas das APIs, sem credenciais ou alterações em playlists reais. Instale as ferramentas fora do checkout:

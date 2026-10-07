@@ -42,7 +42,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   const candidates = options.candidates || tracks.map((track, i) => ({id: `Music12345${i}`, title: track.name, name: track.name,
     channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`, url: `https://www.youtube.com/watch?v=Music12345${i}`}));
   const remote = new Set(options.existing ? [candidates[0].id] : []);
-  const stats = {creates: 0, writes: [], searches: [], searchTimes: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false};
+  const stats = {creates: 0, writes: [], searches: [], searchTimes: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false, loggedOut: []};
   const historyRecord = {id: 'legacy-history', createdAt: new Date().toISOString(), direction,
     sourceInput: sourceId, destinationName: 'Destino antigo', destinationUrl: destUrl, added: 1, pending: 0, skipped: 1, status: 'completed'};
   if (options.legacyPending) {
@@ -55,7 +55,8 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url());
     const json = (data, status = 200) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
-    if (url.pathname === '/api/session') return json({setup: {ready: true}, spotify: {connected: true, sharedClientAvailable: options.sharedAvailable ?? true, callbackUrl: options.callbackUrl || `${baseUrl}/api/spotify/callback`}, youtube: {connected: true}});
+    if (url.pathname === '/api/session') return json({setup: {ready: true}, spotify: {connected: !stats.loggedOut.includes('spotify'), sharedClientAvailable: options.sharedAvailable ?? true, callbackUrl: options.callbackUrl || `${baseUrl}/api/spotify/callback`}, youtube: {connected: !stats.loggedOut.includes('google')}});
+    if (url.pathname === '/api/logout') {stats.loggedOut.push(req.postDataJSON().provider); return json({ok: true});}
     if (url.pathname === '/api/spotify/start') {
       stats.loginQueries.push(url.searchParams.get('client_id'));
       return json({authorizationFixture: true});
@@ -380,6 +381,58 @@ test('normal YouTube operations are paced instead of sending a burst per track',
       'search, write and the next search must each reserve a platform slot');
     assert.equal((await f.history())[0].status, 'completed');
     assert.equal(f.stats.writes.length, 2);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+for (const direction of ['spotify-youtube', 'youtube-spotify']) {
+  test(`${direction}: reload after an unconfirmed write reuses the successful search`, async () => {
+    const f = await fixture(direction);
+    try {
+      f.stats.dropWrite = true;
+      await f.start();
+      assert.equal((await f.history())[0].status, 'interrupted');
+      assert.equal(f.stats.searches.filter(q => q.includes('Horizonte')).length, 1);
+      await f.page.reload();
+      await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+      if (direction === 'youtube-spotify') await f.page.locator('[data-direction="youtube-spotify"]').click();
+      await f.page.locator('#playlist-input').fill(f.sourceId);
+      await f.start();
+      assert.equal(f.stats.searches.filter(q => q.includes('Horizonte')).length, 1);
+      assert.equal(f.stats.creates, 1);
+      assert.equal(f.remote.size, 2);
+      assert.equal((await f.history())[0].status, 'completed');
+      assert.match(await f.page.locator('#live-log').innerText(), /Reaproveitando busca salva/);
+      assert.deepEqual(f.errors, []);
+    } finally {await f.context.close();}
+  });
+}
+
+test('a saved search can repair a missing target track without spending another search request', async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    f.remote.delete(f.candidates[1].id);
+    f.stats.searchFailure = {status: 403, data: {error: 'Cota esgotada', code: 'GOOGLE_403', retryable: false, details: {cause: 'quota', reason: 'quotaExceeded'}}};
+    await f.page.reload();
+    await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+    await f.page.locator('#playlist-input').fill(f.sourceId);
+    await f.start();
+    assert.equal(f.stats.searches.length, 2, 'the quota-limited search endpoint should not be called again');
+    assert.equal(f.remote.size, 2);
+    assert.equal((await f.history())[0].status, 'completed');
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('disconnecting YouTube clears its cached search results', async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    assert.ok(await f.page.evaluate(() => Object.keys(JSON.parse(sessionStorage.getItem('rhyft.web.search-cache.v1'))).length));
+    await f.page.locator('#youtube-logout').click();
+    await f.page.waitForFunction(() => document.querySelector('#youtube-status').textContent === 'Não conectado');
+    assert.deepEqual(await f.page.evaluate(() => JSON.parse(sessionStorage.getItem('rhyft.web.search-cache.v1'))), {});
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
