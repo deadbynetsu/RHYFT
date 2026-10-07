@@ -176,6 +176,43 @@ test('a Retry-After date is forwarded as a waiting period', async () => {
   });
 });
 
+for (const retryDelay of ['90s', {seconds: '90', nanos: 500000000}]) {
+  test(`Google RetryInfo (${typeof retryDelay}) is honored along with Retry-After`, async () => {
+    const api = backend(async () => new Response(JSON.stringify({error: {status: 'RESOURCE_EXHAUSTED', details: [
+      {'@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'RATE_LIMIT_EXCEEDED'},
+      {'@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay}
+    ]}}), {status: 429, headers: {'Retry-After': '30'}}));
+    await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+      assert.equal(error.details.reason, 'RATE_LIMIT_EXCEEDED');
+      assert.equal(error.details.cause, 'rate-limit');
+      assert.equal(error.details.retryAfterMs, typeof retryDelay === 'string' ? 90000 : 90500);
+      return true;
+    });
+  });
+}
+
+for (const scope of ['Day', 'Minute']) {
+  test(`an explicitly named per-${scope.toLowerCase()} Google quota is classified by its actual limit`, async () => {
+    let calls = 0;
+    const api = backend(async () => {
+      calls++;
+      return response(429, {error: {message: 'Quota exceeded.', details: [{
+        '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'RATE_LIMIT_EXCEEDED',
+        metadata: {quota_limit: `QueriesPer${scope}PerProject`, consumer: 'private-project-identifier'}
+      }]}});
+    });
+    const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+    const result = await api.handler(event('youtube/search', {q: 'Song'}, `g_session=${session}`));
+    const data = JSON.parse(result.body);
+    assert.equal(data.retryable, scope === 'Minute');
+    assert.equal(data.details.limitScope, scope.toLowerCase());
+    assert.equal(data.details.cause, scope === 'Day' ? 'quota' : 'rate-limit');
+    assert.match(data.error, scope === 'Day' ? /cota.*esgotada/ : /limitou temporariamente/);
+    assert.doesNotMatch(result.body, /private-project-identifier/);
+    assert.equal(calls, 1);
+  });
+}
+
 test('a 429 with an explicit exhausted quota remains final', async () => {
   let calls = 0;
   const api = backend(async () => {calls++; return response(429, {error: {errors: [{reason: 'quotaExceeded'}]}});});
@@ -245,13 +282,16 @@ test('inaccessible destinations fail instead of creating a replacement', async (
 
 test('YouTube search requests ten candidates with their recording durations', async () => {
   const ids = Array.from({length: 10}, (_, i) => `Video12345${i}`);
+  let searchAt;
   const api = backend(async url => {
     const parsed = new URL(url);
     if (parsed.pathname.endsWith('/search')) {
+      searchAt = Date.now();
       assert.equal(parsed.searchParams.get('maxResults'), '10');
       return response(200, {items: ids.map(id => ({id: {videoId: id}}))});
     }
     assert.equal(parsed.searchParams.get('id'), ids.join(','));
+    assert.ok(Date.now() - searchAt >= 990, 'the metadata request must not immediately follow the search');
     return response(200, {items: ids.map(id => ({id, snippet: {title: 'Song', channelTitle: 'Artist'}, contentDetails: {duration: 'PT3M2S'}}))});
   });
   const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});

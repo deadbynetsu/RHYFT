@@ -25,7 +25,11 @@ A busca separa créditos de artistas do título, reconhece canais Topic/VEVO e i
 
 Leituras que falham temporariamente têm tentativas limitadas. Envios não são repetidos automaticamente: uma falha pode ocorrer depois de a plataforma aceitar a faixa. Nesse caso, o site confere o destino e interrompe se não conseguir confirmar o envio. Cotas e autorizações continuam dependendo das plataformas. Limpar o histórico ou trocar de navegador remove a informação local necessária para localizar o destino.
 
-Buscas têm até **três tentativas**. Para `rateLimitExceeded`, `userRateLimitExceeded` ou HTTP 429 sem motivo de cota esgotada, a Web aguarda 3s e depois 6s entre as tentativas, respeitando um `Retry-After` maior. A espera permite pausar ou cancelar. Se a busca ainda falhar, a faixa fica com erro para tentar novamente na retomada, e a migração segue com as próximas; as faixas já confirmadas não são reenviadas. O servidor deixa a espera por limite temporário para o navegador, sem multiplicar essas três tentativas. `quotaExceeded` e `dailyLimitExceeded` indicam cota esgotada e interrompem a migração. Falhas de sessão, criação ou envio também não são tratadas como uma busca que pode ser pulada.
+Buscas têm até **três tentativas**. As chamadas à API Web do YouTube começam com pelo menos 2s de intervalo, e o servidor espaça em 1s as chamadas de busca e de detalhes que compõem cada pesquisa. Um limite temporário suspende todas as chamadas daquela plataforma neste navegador: no YouTube, a espera cresce de 60s para 120s e depois 240s; no Spotify, de 30s para 60s e 120s. Prazos maiores de `Retry-After` e do `RetryInfo` enviado pelo Google são respeitados. Depois do bloqueio, o ritmo do YouTube fica mais lento, entre 4s e 10s por chamada à API Web. Essa pausa e o ritmo são compartilhados entre abas e persistem ao recarregar; o intervalo normal volta após 30 minutos sem chamadas. A espera mostra uma contagem regressiva e permite pausar ou cancelar, sem acionar o timeout de rede.
+
+Se a busca ainda falhar, a faixa fica com erro para tentar novamente na retomada, e a migração segue com as próximas **respeitando a pausa restante da plataforma**, sem reiniciar a espera curta a cada faixa. O servidor deixa a espera por limite temporário para o navegador, sem multiplicar essas três tentativas. `quotaExceeded`, `dailyLimitExceeded` e descrições explícitas de limite diário indicam cota esgotada e interrompem a migração; limites identificados por minuto/segundo permitem nova tentativa. Falhas de sessão, criação ou envio também não são tratadas como uma busca que pode ser pulada.
+
+A pausa controla as chamadas deste navegador. O projeto Google é compartilhado pelo site, e o uso de outros navegadores também consome seus limites. Se o bloqueio persistir, o responsável deve verificar **YouTube Data API v3 → Quotas e métricas** no Google Cloud para identificar o limite efetivamente atingido; uma cota externa não pode ser ampliada pelo JavaScript.
 
 O log identifica a etapa e a plataforma que falharam, com HTTP, código do erro, motivo enviado pela API e número de tentativas. Um timeout local informa seu prazo; uma resposta `ABORTED` indica interrupção sem presumir timeout ou cota. Falhas durante a consulta dos detalhes de vídeos e a renovação de sessão também recebem contexto. As tentativas de leitura e a conferência de um envio sem resposta aparecem no log. URLs de requisição, tokens e cookies não fazem parte desses detalhes.
 
@@ -34,7 +38,7 @@ O log identifica a etapa e a plataforma que falharam, com HTTP, código do erro,
 Os testes da API usam apenas Node.js 22 ou superior:
 
 ```bash
-node --test tests/web_api.test.cjs tests/web_matching.test.cjs
+node --test tests/web_api.test.cjs tests/web_matching.test.cjs tests/web_pacing.test.cjs
 ```
 
 Os testes da interface executam Chromium com Playwright e respostas simuladas das APIs, sem credenciais ou alterações em playlists reais. Instale as ferramentas fora do checkout:

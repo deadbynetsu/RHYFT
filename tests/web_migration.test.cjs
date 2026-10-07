@@ -26,6 +26,8 @@ after(async () => {await browser?.close(); await new Promise(resolve => server?.
 async function fixture(direction = 'spotify-youtube', options = {}) {
   const context = await browser.newContext();
   const page = await context.newPage();
+  const virtualClock = options.virtualClock ?? true;
+  if (virtualClock) await page.clock.install({time: Date.now()});
   const errors = [];
   page.on('pageerror', error => errors.push(error));
   const origin = direction === 'spotify-youtube' ? 'spotify' : 'youtube';
@@ -74,7 +76,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
     }
     if (url.pathname === `/api/${target}/search`) {
       const query = url.searchParams.get('q'); stats.searches.push(query);
-      stats.searchTimes.push(Date.now());
+      stats.searchTimes.push(await page.evaluate(() => Date.now()));
       if (stats.searchGate) await stats.searchGate;
       if (stats.searchFailure && query.includes('Tempestade') && (stats.searchFailure.remaining === undefined || stats.searchFailure.remaining > 0)) {
         if (stats.searchFailure.remaining !== undefined) stats.searchFailure.remaining--;
@@ -108,7 +110,16 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   await page.locator('#playlist-name').fill('Destino novo');
   const start = async () => {
     await page.locator('#start-migration').click();
-    await page.waitForFunction(() => !document.querySelector('#start-migration').disabled && !document.querySelector('#result-panel').hidden);
+    let stopped = false;
+    const advancing = virtualClock ? (async () => {
+      while (!stopped) {
+        await page.clock.runFor(1000);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    })() : null;
+    try {
+      await page.waitForFunction(() => !document.querySelector('#start-migration').disabled && !document.querySelector('#result-panel').hidden, null, {timeout: 60000});
+    } finally {stopped = true; await advancing;}
   };
   const history = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
   return {page, context, stats, remote, candidates, sourceId, history, start, errors};
@@ -248,20 +259,20 @@ function rateFailure(provider = 'youtube', retryAfterMs = undefined) {
 }
 
 test('a temporary rate limit waits and recovers automatically on the third search attempt', async () => {
-  const f = await fixture();
+  const f = await fixture('spotify-youtube', {virtualClock: true});
   try {
     f.stats.searchFailure = {...rateFailure(), remaining: 2};
     await f.start();
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
     const times = f.stats.searchTimes.slice(1);
-    assert.ok(times[1] - times[0] >= 2900, 'the first retry must wait');
-    assert.ok(times[2] - times[1] >= 5900, 'the second retry must back off further');
+    assert.ok(times[1] - times[0] >= 60000, 'the first retry must wait for the whole window');
+    assert.ok(times[2] - times[1] >= 120000, 'the second retry must back off further');
     assert.equal((await f.history())[0].status, 'completed');
     assert.equal((await f.history())[0].skipped, 0);
     assert.equal(f.remote.size, 2);
     const log = await f.page.locator('#live-log').innerText();
-    assert.match(log, /Aguardando 3s.*\(2\/3\)/);
-    assert.match(log, /Aguardando 6s.*\(3\/3\)/);
+    assert.match(log, /Todas as chamadas.*aguardam 60s/);
+    assert.match(log, /Todas as chamadas.*aguardam 120s/);
     assert.doesNotMatch(log, /cota.*atingida|Migração interrompida/);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
@@ -270,12 +281,15 @@ test('a temporary rate limit waits and recovers automatically on the third searc
 for (const direction of ['spotify-youtube', 'youtube-spotify']) {
   test(`${direction}: after three rate limits, continues with later tracks and retries the deferred one on resume`, async () => {
     const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
-    const f = await fixture(direction, {tracks});
+    const f = await fixture(direction, {tracks, virtualClock: true});
     try {
       f.stats.searchFailure = rateFailure(direction === 'spotify-youtube' ? 'youtube' : 'spotify');
       await f.start();
       assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
       assert.ok(f.stats.searches.some(q => q.includes('Aurora')));
+      const aurora = f.stats.searches.findIndex(q => q.includes('Aurora'));
+      assert.ok(f.stats.searchTimes[aurora] - f.stats.searchTimes[aurora - 1] >= (direction === 'spotify-youtube' ? 240000 : 120000),
+        'the next track must honor the last cooldown, without resetting it');
       assert.deepEqual(f.stats.writes.flat(), [f.candidates[0].id, f.candidates[2].id]);
       const saved = (await f.history())[0];
       assert.equal(saved.status, 'interrupted');
@@ -294,32 +308,78 @@ for (const direction of ['spotify-youtube', 'youtube-spotify']) {
 }
 
 test('a longer provider Retry-After is respected before retrying a search', async () => {
-  const f = await fixture();
+  const f = await fixture('spotify-youtube', {virtualClock: true});
   try {
-    f.stats.searchFailure = {...rateFailure('youtube', 4000), remaining: 1};
+    f.stats.searchFailure = {...rateFailure('youtube', 90000), remaining: 1};
     await f.start();
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 2);
-    assert.ok(f.stats.searchTimes[2] - f.stats.searchTimes[1] >= 3900);
-    assert.match(await f.page.locator('#live-log').innerText(), /Aguardando 4s/);
+    assert.ok(f.stats.searchTimes[2] - f.stats.searchTimes[1] >= 90000);
+    assert.match(await f.page.locator('#live-log').innerText(), /aguardam 90s/);
     assert.equal((await f.history())[0].status, 'completed');
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
 
 test('pause and cancel stay responsive while waiting after a rate limit', async () => {
-  const f = await fixture();
+  const f = await fixture('spotify-youtube', {virtualClock: true});
   try {
     f.stats.searchFailure = rateFailure();
     await f.page.locator('#start-migration').click();
-    await f.page.waitForFunction(() => document.querySelector('#live-log').textContent.includes('Aguardando 3s'));
+    for (let i = 0; i < 15 && !await f.page.locator('#live-log').textContent().then(text => text.includes('aguardam 60s')); i++) {
+      await f.page.clock.runFor(1000);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.match(await f.page.locator('#progress-title').innerText(), /YouTube limitou as chamadas.*aguardando/);
     await f.page.locator('#pause-migration').click();
-    await f.page.waitForTimeout(3300);
+    await f.page.clock.runFor(65000);
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
     await f.page.locator('#cancel-migration').click();
+    await f.page.clock.runFor(1000);
     await f.page.waitForFunction(() => !document.querySelector('#start-migration').disabled);
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
     assert.equal((await f.history())[0].status, 'cancelled');
     assert.equal((await f.history())[0].added, 1);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('a reload cannot bypass the saved YouTube cooldown', async () => {
+  const f = await fixture();
+  try {
+    f.stats.searchFailure = rateFailure();
+    await f.page.locator('#start-migration').click();
+    for (let i = 0; i < 15 && !await f.page.locator('#live-log').textContent().then(text => text.includes('aguardam 60s')); i++) {
+      await f.page.clock.runFor(1000);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.match(await f.page.locator('#progress-title').innerText(), /aguardando/);
+    await f.page.locator('#cancel-migration').click();
+    await f.page.clock.runFor(1000);
+    await f.page.waitForFunction(() => !document.querySelector('#start-migration').disabled);
+    f.stats.searchFailure = null;
+    await f.page.reload();
+    await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+    await f.page.locator('#playlist-input').fill(f.sourceId);
+    await f.page.locator('#start-migration').click();
+    for (let i = 0; i < 10; i++) {
+      await f.page.clock.runFor(1000);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(f.stats.reads, 0, 'destination checks also obey the platform cooldown after reload');
+    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
+    assert.match(await f.page.locator('#progress-title').innerText(), /YouTube limitou as chamadas.*aguardando/);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('normal YouTube operations are paced instead of sending a burst per track', async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    assert.ok(f.stats.searchTimes[1] - f.stats.searchTimes[0] >= 4000,
+      'search, write and the next search must each reserve a platform slot');
+    assert.equal((await f.history())[0].status, 'completed');
+    assert.equal(f.stats.writes.length, 2);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });

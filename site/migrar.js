@@ -4,6 +4,9 @@
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const store = window.RhyftMigrationStore;
   const matching = window.RhyftMusicMatching;
+  let pacingStorage;
+  try { pacingStorage = localStorage; } catch {}
+  const pacing = window.RhyftProviderPacing.create({storage: pacingStorage});
 
   const ui = {
     spotifyStatus: $('#spotify-status'), spotifyDetail: $('#spotify-detail'), spotifyConnect: $('#spotify-connect'), spotifyLogout: $('#spotify-logout'),
@@ -74,6 +77,7 @@
     let attempts = init.method === 'GET' ? context.operation === 'search' ? 3 : 2 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (state.running) await checkpoint();
+      await reserveProvider(context.provider);
       let retryDelay = 500;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 30000);
@@ -118,25 +122,53 @@
         }
         error.context = context;
         error.attempts = attempt + 1;
-        if (isRateLimited(error) && init.method === 'GET') {
-          attempts = 3;
-          retryDelay = Math.max(3000 * 2 ** attempt, Number(error.details?.retryAfterMs) || 0);
+        if (isRateLimited(error)) {
+          retryDelay = await withProviderLock(context.provider, () => pacing.limited(context.provider, Number(error.details?.retryAfterMs) || 0));
+          if (init.method === 'GET') attempts = 3;
+          if (state.running || state.reviewing) log(`⚠ ${describeFailure(error)} Todas as chamadas a esta plataforma aguardam ${Math.ceil(retryDelay / 1000)}s antes de continuar.`, 'warn');
         }
         if (!isTemporary(error) || attempt + 1 === attempts) throw error;
-        if (state.running || state.reviewing) log(`⚠ ${describeFailure(error)} Aguardando ${Math.ceil(retryDelay / 1000)}s. Nova tentativa de leitura (${attempt + 2}/${attempts})…`, 'warn');
+        if (state.running || state.reviewing) log(`⚠ ${isRateLimited(error) ? '' : describeFailure(error)} Nova tentativa de leitura (${attempt + 2}/${attempts})…`, 'warn');
       } finally { clearTimeout(timer); }
-      await waitForRetry(retryDelay);
+      if (retryDelay === 500) await waitForRetry(retryDelay);
     }
   }
 
   function isRateLimited(error) {
     const details = error.details || {};
-    if (details.cause === 'quota' || /quota|dailyLimit/i.test(details.reason || '')) return false;
-    return details.cause === 'rate-limit' || /rateLimit/i.test(details.reason || '') || error.status === 429;
+    if (details.cause === 'quota' || details.limitScope === 'day') return false;
+    if (details.cause === 'rate-limit' || ['minute', 'second'].includes(details.limitScope)) return true;
+    if (/quota|daily[_-]?Limit/i.test(details.reason || '')) return false;
+    return /rate[_-]?Limit/i.test(details.reason || '') || error.status === 429;
   }
 
   function isTemporary(error) {
     return isRateLimited(error) || (typeof error.retryable === 'boolean' ? error.retryable : [500, 502, 503, 504].includes(error.status));
+  }
+
+  function withProviderLock(provider, action) {
+    // Share reservations between tabs when Web Locks are available.
+    return navigator.locks?.request ? navigator.locks.request(`rhyft:provider:${provider}`, action) : action();
+  }
+
+  async function reserveProvider(provider) {
+    const at = await withProviderLock(provider, () => pacing.reserve(provider));
+    const previousTitle = ui.progressTitle.textContent;
+    let displayed = false;
+    try {
+      for (;;) {
+        if (state.running) await checkpoint();
+        const wait = pacing.remaining(provider, at);
+        if (!wait.ms) break;
+        if (wait.blocked && state.running) {
+          ui.progressTitle.textContent = `${{youtube: 'YouTube', spotify: 'Spotify'}[provider] || 'Servidor'} limitou as chamadas · aguardando ${Math.ceil(wait.ms / 1000)}s…`;
+          displayed = true;
+        }
+        await sleep(Math.min(wait.ms, 200));
+      }
+    } finally {
+      if (displayed) ui.progressTitle.textContent = previousTitle;
+    }
   }
 
   async function waitForRetry(ms) {

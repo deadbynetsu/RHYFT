@@ -138,10 +138,10 @@ async function readJson(response) {
 
 function providerMessage(provider, status, data) {
   if (provider === 'google') {
-    const reason = data?.error?.errors?.[0]?.reason || data?.error?.status || '';
+    const limit = googleLimit(data, status);
     const message = data?.error?.message || data?.error_description || (typeof data?.error === 'string' ? data.error : '');
-    if (/quota|dailyLimit/i.test(reason)) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
-    if (status === 429 || /rateLimit/i.test(reason)) return 'O YouTube limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
+    if (limit.kind === 'quota') return 'O Google informou que a cota do YouTube para este projeto foi esgotada. A migração precisa aguardar a liberação dessa cota.';
+    if (limit.kind === 'rate-limit') return 'O YouTube limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
     if (/quota|dailyLimit/i.test(message || '')) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
     if (status === 401) return 'A sessão do Google expirou ou foi revogada. Conecte o Google / YouTube novamente.';
     if (status === 403) return message || 'O Google recusou esta operação. Verifique as permissões concedidas ao aplicativo.';
@@ -172,15 +172,44 @@ function providerContext(url, options, provider) {
 }
 
 function providerReason(data) {
-  const value = data?.error?.errors?.[0]?.reason || data?.error?.status || data?.error;
+  const info = providerDetails(data).find(detail => String(detail['@type'] || '').endsWith('/google.rpc.ErrorInfo'));
+  const value = data?.error?.errors?.[0]?.reason || info?.reason || data?.error?.status || data?.error;
   return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : undefined;
 }
 
-function retryAfterMs(response) {
+function providerDetails(data) {
+  return Array.isArray(data?.error?.details) ? data.error.details.filter(item => item && typeof item === 'object') : [];
+}
+
+function googleLimit(data, status) {
+  const reason = providerReason(data) || '';
+  const details = providerDetails(data);
+  // Use explicit limit descriptions, not project/account identifiers in metadata.
+  const descriptions = [data?.error?.message, ...details.flatMap(detail => [detail.metadata?.quota_limit,
+    ...(Array.isArray(detail.violations) ? detail.violations.map(violation => violation.description) : [])])]
+    .filter(value => typeof value === 'string').join(' ');
+  if (status !== 429 && !/quota|daily[_-]?Limit|rate[_-]?Limit|RESOURCE_EXHAUSTED/i.test(reason)
+    && !/quota|rate.limit/i.test(String(data?.error?.message || '')) && !details.some(detail => detail.metadata?.quota_limit)) return {};
+  const scope = /per\s*day|\/day|daily/i.test(descriptions) ? 'day'
+    : /per\s*minute|\/minute|\/min\b/i.test(descriptions) ? 'minute'
+    : /per\s*second|\/second|\/sec\b/i.test(descriptions) ? 'second' : undefined;
+  const quota = scope === 'day' || !scope && /quota|daily[_-]?Limit/i.test(reason);
+  const rate = !quota && (scope === 'minute' || scope === 'second' || status === 429 || /rate[_-]?Limit/i.test(reason));
+  return {kind: quota ? 'quota' : rate ? 'rate-limit' : undefined, scope};
+}
+
+function retryAfterMs(response, data) {
   const value = response.headers?.get('retry-after');
-  if (!value) return undefined;
-  const delay = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
-  return Number.isFinite(delay) && delay >= 0 ? Math.ceil(delay) : undefined;
+  const delays = [];
+  if (value) delays.push(/^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now());
+  for (const detail of providerDetails(data)) {
+    if (!String(detail['@type'] || '').endsWith('/google.rpc.RetryInfo')) continue;
+    const duration = detail.retryDelay;
+    if (typeof duration === 'string' && /^\d+(?:\.\d+)?s$/.test(duration)) delays.push(parseFloat(duration) * 1000);
+    else if (duration && typeof duration === 'object') delays.push(Number(duration.seconds || 0) * 1000 + Number(duration.nanos || 0) / 1000000);
+  }
+  const valid = delays.filter(delay => Number.isFinite(delay) && delay >= 0);
+  return valid.length ? Math.ceil(Math.max(...valid)) : undefined;
 }
 
 async function providerFetch(url, options, provider) {
@@ -197,8 +226,9 @@ async function providerFetch(url, options, provider) {
       if (!response.ok) {
         const reason = providerReason(data);
         const originalMessage = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.error === 'string' ? data.error : '';
-        const quota = /quota|dailyLimit/i.test(reason || '');
-        const rateLimit = !quota && (response.status === 429 || /rateLimit/i.test(reason || ''));
+        const limit = provider === 'google' ? googleLimit(data, response.status) : {};
+        const quota = limit.kind === 'quota' || provider !== 'google' && /quota|daily[_-]?Limit/i.test(reason || '');
+        const rateLimit = !quota && (limit.kind === 'rate-limit' || response.status === 429 || /rate[_-]?Limit/i.test(reason || ''));
         const accessOrLimit = [401, 403].includes(response.status) || quota || rateLimit;
         const aborted = !accessOrLimit && (reason === 'ABORTED' || /\b(?:aborted|cancelled|canceled)\b/i.test(originalMessage || data?.raw || ''));
         const timeout = !accessOrLimit && reason === 'DEADLINE_EXCEEDED';
@@ -211,7 +241,8 @@ async function providerFetch(url, options, provider) {
         const error = new HttpError(response.status, message, `${provider.toUpperCase()}_${response.status}`,
           { ...context, cause: quota ? 'quota' : rateLimit ? 'rate-limit' : timeout ? 'timeout' : aborted ? 'aborted' : 'http',
             upstreamStatus: response.status, reason, attempts: attempt + 1,
-            ...(rateLimit ? {retryAfterMs: retryAfterMs(response)} : {}) });
+            ...(limit.scope ? {limitScope: limit.scope} : {}),
+            ...(rateLimit ? {retryAfterMs: retryAfterMs(response, data)} : {}) });
         // The browser schedules rate-limit retries so waiting remains pausable.
         error.retryable = rateLimit || !accessOrLimit && ([500, 502, 503, 504].includes(response.status) || aborted || timeout);
         throw error;
@@ -517,6 +548,8 @@ async function youtubeSearchRoute(event) {
   const search = await providerFetch(`${YOUTUBE_API}/search?${params}`, { headers: bearer(auth.accessToken) }, 'google');
   const ids = (search.items || []).map(x => x.id?.videoId).filter(Boolean);
   if (!ids.length) return json(200, { items: [] }, auth.setCookies);
+  // A browser search makes two upstream calls; don't send their requests in a burst.
+  await new Promise(resolve => setTimeout(resolve, 1000));
   const details = await providerFetch(`${YOUTUBE_API}/videos?part=snippet,contentDetails&id=${encodeURIComponent(ids.join(','))}`, { headers: bearer(auth.accessToken) }, 'google');
   const map = new Map((details.items || []).map(v => [v.id, v]));
   const items = ids.map(id => map.get(id)).filter(Boolean).map(v => ({ id: v.id, title: v.snippet?.title || '', channel: v.snippet?.channelTitle || '', duration: parseDuration(v.contentDetails?.duration), url: `https://www.youtube.com/watch?v=${v.id}` }));
