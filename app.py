@@ -474,8 +474,6 @@ def verificar_atualizacoes_auto(app_root):
 class MigradorApp(MotorMigracao, ctk.CTk):
     def __init__(self):
         super().__init__()
-        from desktop_language import ensure_language
-        ensure_language(self, DATA_DIR)
         definir_fontes(self)
 
         self.title(f'RHYFT (v{APP_VERSION})')

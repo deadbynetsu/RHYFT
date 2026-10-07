@@ -84,5 +84,11 @@ class RHYFTApp(base.MigradorApp):
 
 if __name__ == "__main__":
     configurar_app_id_windows()
+    from desktop_language import prepare_language_before_app
+
+    selected_language = prepare_language_before_app(base.DATA_DIR)
+    if selected_language is None:
+        raise SystemExit(0)
+
     app = RHYFTApp()
     app.mainloop()
