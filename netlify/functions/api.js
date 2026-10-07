@@ -22,7 +22,6 @@ class HttpError extends Error {
 
 function setupStatus() {
   const missing = [];
-  if (!process.env.SPOTIFY_CLIENT_ID) missing.push('SPOTIFY_CLIENT_ID');
   if (!process.env.GOOGLE_CLIENT_ID) missing.push('GOOGLE_CLIENT_ID');
   if (!process.env.GOOGLE_CLIENT_SECRET) missing.push('GOOGLE_CLIENT_SECRET');
   if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) missing.push('SESSION_SECRET (32+ caracteres)');
@@ -147,6 +146,9 @@ function providerMessage(provider, status, data) {
     return message || `O Google respondeu com erro ${status}.`;
   }
   const message = data?.error?.message || data?.error_description || data?.error?.status || data?.raw;
+  if (status === 403 && /user (?:is )?not registered|not registered for this application/i.test(String(message || ''))) {
+    return 'Esta conta não está autorizada no aplicativo Spotify usado no login. O dono do app precisa adicioná-la em User Management no Spotify Developers, ou você pode conectar com seu próprio Client ID no RHYFT.';
+  }
   if (status === 429) return 'O Spotify limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
   if (status === 401) return 'A sessão do Spotify expirou ou foi revogada. Conecte o Spotify novamente.';
   if (status === 403) return message || 'O Spotify recusou a operação. Playlists de origem precisam estar disponíveis para a sua conta.';
@@ -204,13 +206,13 @@ function parseDuration(value) {
 }
 
 async function refreshSpotify(session) {
-  const { SPOTIFY_CLIENT_ID } = requireEnv('SPOTIFY_CLIENT_ID');
+  const clientId = spotifyClientId(session?.client_id || process.env.SPOTIFY_CLIENT_ID);
   if (!session?.refresh_token) throw new HttpError(401, 'Spotify não conectado.', 'AUTH_REQUIRED');
-  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: session.refresh_token, client_id: SPOTIFY_CLIENT_ID });
+  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: session.refresh_token, client_id: clientId });
   const response = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   const data = await readJson(response);
   if (!response.ok) throw new HttpError(401, 'Não consegui renovar a sessão do Spotify. Conecte novamente.', 'AUTH_REQUIRED');
-  return { ...session, ...data, refresh_token: data.refresh_token || session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
+  return { ...session, ...data, client_id: clientId, refresh_token: data.refresh_token || session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
 }
 
 async function spotifyAuth(event, optional = false) {
@@ -263,31 +265,44 @@ async function googleAuth(event, optional = false) {
 
 function bearer(token) { return { Authorization: `Bearer ${token}` }; }
 
+function spotifyClientId(value) {
+  const id = String(value || '').trim();
+  if (!/^[0-9a-f]{32}$/i.test(id)) throw new HttpError(400, 'Informe um Client ID válido do Spotify (32 caracteres, somente o ID). O Client Secret não é necessário.', 'INVALID_CLIENT_ID');
+  return id;
+}
+
 async function spotifyStart(event) {
-  const { SPOTIFY_CLIENT_ID } = requireEnv('SPOTIFY_CLIENT_ID', 'SESSION_SECRET');
+  requireEnv('SESSION_SECRET');
+  const clientId = spotifyClientId(event.queryStringParameters?.client_id ?? process.env.SPOTIFY_CLIENT_ID);
   const state = randomString(24), verifier = randomString(48);
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
   const callback = `${origin(event)}/api/spotify/callback`;
   const returnTo = safeReturnTo(event.queryStringParameters?.return);
-  const params = new URLSearchParams({ client_id: SPOTIFY_CLIENT_ID, response_type: 'code', redirect_uri: callback, scope: SPOTIFY_SCOPE, state, code_challenge_method: 'S256', code_challenge: challenge });
-  return redirect(`${SPOTIFY_ACCOUNTS}/authorize?${params}`, [cookie('sp_oauth', seal({ state, verifier, returnTo, created: Date.now() }), 600)]);
+  const params = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: callback, scope: SPOTIFY_SCOPE, state, code_challenge_method: 'S256', code_challenge: challenge, show_dialog: 'true' });
+  return redirect(`${SPOTIFY_ACCOUNTS}/authorize?${params}`, [cookie('sp_oauth', seal({ state, verifier, clientId, returnTo, created: Date.now() }), 600)]);
 }
 
 async function spotifyCallback(event) {
-  const { SPOTIFY_CLIENT_ID } = requireEnv('SPOTIFY_CLIENT_ID', 'SESSION_SECRET');
+  requireEnv('SESSION_SECRET');
   const saved = unseal(parseCookies(event).sp_oauth);
   const returnTo = safeReturnTo(saved?.returnTo);
   if (!saved || Date.now() - Number(saved.created || 0) > 10 * 60 * 1000) return redirect(`${returnTo}?auth_error=${encodeURIComponent('A tentativa de login do Spotify expirou. Tente novamente.')}`, [clearCookie('sp_oauth')]);
   if (event.queryStringParameters?.error) return redirect(`${returnTo}?auth_error=${encodeURIComponent('A autorização do Spotify foi cancelada.')}`, [clearCookie('sp_oauth')]);
   if (event.queryStringParameters?.state !== saved.state || !event.queryStringParameters?.code) return redirect(`${returnTo}?auth_error=${encodeURIComponent('Resposta de login do Spotify inválida.')}`, [clearCookie('sp_oauth')]);
+  // Bind token exchange to the signed login request, never to callback input.
+  const clientId = spotifyClientId(saved.clientId || process.env.SPOTIFY_CLIENT_ID);
   const callback = `${origin(event)}/api/spotify/callback`;
-  const body = new URLSearchParams({ client_id: SPOTIFY_CLIENT_ID, grant_type: 'authorization_code', code: event.queryStringParameters.code, redirect_uri: callback, code_verifier: saved.verifier });
+  const body = new URLSearchParams({ client_id: clientId, grant_type: 'authorization_code', code: event.queryStringParameters.code, redirect_uri: callback, code_verifier: saved.verifier });
   const response = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   const token = await readJson(response);
   if (!response.ok) return redirect(`${returnTo}?auth_error=${encodeURIComponent('O Spotify recusou a autorização. Tente novamente.')}`, [clearCookie('sp_oauth')]);
-  let name = 'Conta Spotify';
-  try { const me = await providerFetch(`${SPOTIFY_API}/me`, { headers: bearer(token.access_token) }, 'spotify'); name = me.display_name || me.id || name; } catch {}
-  const session = { ...token, name, expires_at: Date.now() + Number(token.expires_in || 3600) * 1000 };
+  let me;
+  try { me = await providerFetch(`${SPOTIFY_API}/me`, { headers: bearer(token.access_token) }, 'spotify'); }
+  catch (error) {
+    const message = error instanceof HttpError ? error.message : 'Não consegui verificar sua conta Spotify. Tente conectar novamente.';
+    return redirect(`${returnTo}?auth_error=${encodeURIComponent(message)}`, [clearCookie('sp_session'), clearCookie('sp_oauth')]);
+  }
+  const session = { ...token, client_id: clientId, user_id: me.id, name: me.display_name || me.id || 'Conta Spotify', expires_at: Date.now() + Number(token.expires_in || 3600) * 1000 };
   return redirect(`${returnTo}?auth=spotify-ok`, [cookie('sp_session', seal(session), 60 * 60 * 24 * 30), clearCookie('sp_oauth')]);
 }
 
@@ -324,11 +339,12 @@ async function googleCallback(event) {
 
 async function sessionRoute(event) {
   const setup = setupStatus();
-  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) return json(200, { setup, spotify: { connected: false }, youtube: { connected: false } });
+  const spotifySetup = { sharedClientAvailable: /^[0-9a-f]{32}$/i.test(process.env.SPOTIFY_CLIENT_ID || ''), callbackUrl: `${origin(event)}/api/spotify/callback` };
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) return json(200, { setup, spotify: { ...spotifySetup, connected: false }, youtube: { connected: false } });
   const cookies = [];
   const sp = await spotifyAuth(event, true); const yt = await googleAuth(event, true);
   if (sp?.setCookies) cookies.push(...sp.setCookies); if (yt?.setCookies) cookies.push(...yt.setCookies);
-  return json(200, { setup, spotify: { connected: !!sp, name: sp?.session?.name || null }, youtube: { connected: !!yt, name: yt?.session?.name || null } }, cookies);
+  return json(200, { setup, spotify: { ...spotifySetup, connected: !!sp, name: sp?.session?.name || null }, youtube: { connected: !!yt, name: yt?.session?.name || null } }, cookies);
 }
 
 async function logoutRoute(event) {

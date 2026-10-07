@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/history.css">
   <script src="/migration-store.js" defer></script>
   <script src="/music-matching.js" defer></script>
+  <script src="/spotify-setup.js" defer></script>
   <script src="/migrar.js" defer></script>
   <script src="/history.js" defer></script>
 </head>
@@ -67,6 +68,36 @@
         <div class="account-actions"><a class="btn btn-small btn-secondary" id="youtube-connect" href="/api/google/start">Conectar</a><button class="text-action" id="youtube-logout" hidden>Desconectar</button></div>
       </article>
     </section>
+
+    <dialog id="spotify-setup" class="spotify-setup" aria-labelledby="spotify-setup-title">
+      <div class="spotify-setup-head"><h2 id="spotify-setup-title">Conectar ao Spotify</h2><button id="spotify-setup-close" type="button" class="text-action" aria-label="Fechar">Fechar</button></div>
+      <p>Você pode usar seu próprio aplicativo Spotify. Assim, a autorização mostra o nome do app que você criou.</p>
+      <form id="spotify-personal-form" novalidate>
+        <label for="spotify-client-id">Client ID do seu aplicativo</label>
+        <input id="spotify-client-id" maxlength="32" autocomplete="off" spellcheck="false" placeholder="Cole os 32 caracteres do Client ID">
+        <p class="spotify-setup-note">Use somente o Client ID. O Client Secret não é necessário e não deve ser informado aqui.</p>
+        <details id="spotify-tutorial" open>
+          <summary>Como criar e configurar meu aplicativo</summary>
+          <ol>
+            <li>Abra o <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noreferrer">Spotify Developer Dashboard</a> com a conta que você vai usar na migração.</li>
+            <li>Clique em <strong>Create app</strong>. Escolha um nome, por exemplo <strong>RHYFT pessoal</strong>, preencha a descrição e selecione <strong>Web API</strong> quando solicitado.</li>
+            <li>Em <strong>Redirect URIs</strong>, adicione exatamente o endereço abaixo e salve:</li>
+          </ol>
+          <div class="spotify-redirect"><input id="spotify-redirect" readonly aria-label="Redirect URI do Spotify"><button id="spotify-copy-redirect" type="button" class="btn btn-small btn-secondary">Copiar</button></div>
+          <ol start="4">
+            <li>Copie o <strong>Client ID</strong> do aplicativo, cole no campo acima e clique em <strong>Conectar com meu Client ID</strong>.</li>
+            <li>Confira a conta na página do Spotify. Outras contas precisam ser cadastradas em <strong>User Management</strong> pelo dono desse aplicativo enquanto ele estiver em modo de desenvolvimento.</li>
+          </ol>
+          <p class="spotify-setup-note">A criação de apps e os limites de contas seguem as <a href="https://developer.spotify.com/documentation/web-api/concepts/quota-modes" target="_blank" rel="noreferrer">regras do Spotify</a>. Se o Dashboard não permitir criar um app, peça ao responsável por um app existente para autorizar sua conta.</p>
+        </details>
+        <button class="btn btn-primary" type="submit">Conectar com meu Client ID</button>
+      </form>
+      <div id="spotify-shared-option" class="spotify-shared-option">
+        <p>O app do site também está disponível, mas no modo de desenvolvimento só permite contas autorizadas pelo dono. A autorização exibe o nome cadastrado nesse aplicativo.</p>
+        <a id="spotify-shared-connect" href="/api/spotify/start" class="btn btn-small btn-secondary">Usar app do site</a>
+      </div>
+      <p id="spotify-setup-error" class="spotify-setup-error" role="alert" hidden></p>
+    </dialog>
 
     <section class="migrator-panel">
       <div class="direction-switch" role="tablist" aria-label="Sentido da migração">

@@ -5,13 +5,13 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const path = require('node:path');
 
-function backend(fetch) {
+function backend(fetch, env = {}) {
   const context = vm.createContext({
     require, exports: {}, fetch, AbortController, URL, URLSearchParams, Buffer, console,
-    setTimeout, clearTimeout, process: { env: { SESSION_SECRET: crypto.randomBytes(32).toString('hex') } }
+    setTimeout, clearTimeout, process: { env: { SESSION_SECRET: crypto.randomBytes(32).toString('hex'), ...env } }
   });
   const code = fs.readFileSync(path.join(__dirname, '../netlify/functions/api.js'), 'utf8');
-  vm.runInContext(`${code}\nexports.testing = {providerFetch, seal};`, context);
+  vm.runInContext(`${code}\nexports.testing = {providerFetch, seal, unseal, refreshSpotify};`, context);
   return context.exports;
 }
 function response(status, body) {
@@ -109,4 +109,104 @@ test('YouTube search requests ten candidates with their recording durations', as
   const data = JSON.parse(result.body);
   assert.equal(data.items.length, 10);
   assert.equal(data.items[0].duration, 182);
+});
+
+const personalId = 'a'.repeat(32), sharedId = 'b'.repeat(32);
+function event(route, query = {}, cookie = '') {
+  return {path: `/api/${route}`, httpMethod: 'GET', headers: {host: 'rhyft.example.test', cookie}, queryStringParameters: query};
+}
+function savedCookie(result, name) {
+  const value = result.multiValueHeaders?.['Set-Cookie']?.find(cookie => cookie.startsWith(`${name}=`));
+  return value ? decodeURIComponent(value.split(';')[0].slice(name.length + 1)) : '';
+}
+
+for (const personal of [true, false]) {
+  test(`Spotify login uses the ${personal ? 'personal' : 'shared'} Client ID with PKCE`, async () => {
+    const api = backend(() => {throw new Error('login start should not fetch');}, {SPOTIFY_CLIENT_ID: sharedId});
+    const result = await api.handler(event('spotify/start', personal ? {client_id: personalId} : {}));
+    assert.equal(result.statusCode, 302);
+    const location = new URL(result.headers.Location);
+    assert.equal(location.hostname, 'accounts.spotify.com');
+    assert.equal(location.searchParams.get('client_id'), personal ? personalId : sharedId);
+    assert.equal(location.searchParams.get('code_challenge_method'), 'S256');
+    const saved = api.testing.unseal(savedCookie(result, 'sp_oauth'));
+    assert.equal(saved.clientId, personal ? personalId : sharedId);
+    assert.equal(saved.state, location.searchParams.get('state'));
+    assert.ok(saved.verifier);
+  });
+}
+
+test('a personal Client ID works without a shared server Client ID', async () => {
+  const api = backend(() => {throw new Error('unexpected fetch');});
+  const result = await api.handler(event('spotify/start', {client_id: personalId}));
+  assert.equal(result.statusCode, 302);
+  const status = JSON.parse((await api.handler(event('session'))).body);
+  assert.equal(status.spotify.sharedClientAvailable, false);
+  assert.equal(status.spotify.callbackUrl, 'https://rhyft.example.test/api/spotify/callback');
+  assert.ok(!status.setup.missing.includes('SPOTIFY_CLIENT_ID'));
+});
+
+test('an invalid pasted Client ID is rejected before contacting Spotify', async () => {
+  const api = backend(() => {throw new Error('unexpected fetch');});
+  const result = await api.handler(event('spotify/start', {client_id: '# SPOTIFY_CLIENT_ID | Value'}));
+  assert.equal(result.statusCode, 400);
+  assert.equal(JSON.parse(result.body).code, 'INVALID_CLIENT_ID');
+});
+
+test('token exchange and refresh stay bound to the selected personal app', async () => {
+  const tokenBodies = [];
+  const api = backend(async (url, options) => {
+    if (url.endsWith('/api/token')) {
+      tokenBodies.push(new URLSearchParams(options.body));
+      return response(200, {access_token: 'fixture-token', refresh_token: 'fixture-refresh', expires_in: 3600});
+    }
+    assert.ok(url.endsWith('/me'));
+    return response(200, {id: 'test-user', display_name: 'Test User'});
+  }, {SPOTIFY_CLIENT_ID: sharedId});
+  const start = await api.handler(event('spotify/start', {client_id: personalId}));
+  const oauthCookie = savedCookie(start, 'sp_oauth');
+  const oauth = api.testing.unseal(oauthCookie);
+  const result = await api.handler(event('spotify/callback', {state: oauth.state, code: 'fixture-code', client_id: 'c'.repeat(32)}, `sp_oauth=${oauthCookie}`));
+  assert.match(result.headers.Location, /auth=spotify-ok/);
+  assert.equal(tokenBodies[0].get('client_id'), personalId);
+  assert.equal(tokenBodies[0].get('code_verifier'), oauth.verifier);
+  const session = api.testing.unseal(savedCookie(result, 'sp_session'));
+  assert.equal(session.client_id, personalId);
+  assert.equal(session.user_id, 'test-user');
+  const refreshed = await api.testing.refreshSpotify(session);
+  assert.equal(tokenBodies[1].get('client_id'), personalId);
+  assert.equal(tokenBodies[1].get('grant_type'), 'refresh_token');
+  assert.equal(refreshed.client_id, personalId);
+});
+
+test('legacy sessions continue refreshing with the configured shared app', async () => {
+  const api = backend(async (url, options) => {
+    assert.equal(new URLSearchParams(options.body).get('client_id'), sharedId);
+    return response(200, {access_token: 'fixture-token', expires_in: 3600});
+  }, {SPOTIFY_CLIENT_ID: sharedId});
+  const refreshed = await api.testing.refreshSpotify({refresh_token: 'fixture-refresh'});
+  assert.equal(refreshed.client_id, sharedId);
+  assert.equal(refreshed.refresh_token, 'fixture-refresh');
+});
+
+test('a rejected account gets an actionable error instead of a connected session', async () => {
+  const api = backend(async url => url.endsWith('/api/token')
+    ? response(200, {access_token: 'fixture-token', expires_in: 3600})
+    : response(403, {error: {message: 'The user is not registered for this application. Please check your settings on https://developer.spotify.com/dashboard.'}}), {SPOTIFY_CLIENT_ID: sharedId});
+  const start = await api.handler(event('spotify/start'));
+  const oauthCookie = savedCookie(start, 'sp_oauth');
+  const oauth = api.testing.unseal(oauthCookie);
+  const result = await api.handler(event('spotify/callback', {state: oauth.state, code: 'fixture-code'}, `sp_oauth=${oauthCookie}`));
+  const url = new URL(result.headers.Location, 'https://rhyft.example.test');
+  assert.match(url.searchParams.get('auth_error'), /User Management/);
+  assert.match(url.searchParams.get('auth_error'), /próprio Client ID/);
+  assert.equal(url.searchParams.has('auth'), false);
+  assert.ok(result.multiValueHeaders['Set-Cookie'].some(cookie => cookie.startsWith('sp_session=;') && cookie.includes('Max-Age=0')));
+});
+
+test('a callback with an invalid OAuth state cannot exchange a token', async () => {
+  const api = backend(() => {throw new Error('token exchange must not run');}, {SPOTIFY_CLIENT_ID: sharedId});
+  const start = await api.handler(event('spotify/start', {client_id: personalId}));
+  const result = await api.handler(event('spotify/callback', {state: 'wrong', code: 'fixture-code'}, `sp_oauth=${savedCookie(start, 'sp_oauth')}`));
+  assert.match(new URL(result.headers.Location, 'https://rhyft.example.test').searchParams.get('auth_error'), /inválida/);
 });

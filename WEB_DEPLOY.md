@@ -57,7 +57,7 @@ Importe este repositório no Netlify. O `netlify.toml` já configura:
 Em **Site configuration → Environment variables**, crie:
 
 - `SITE_URL` — URL final, sem barra no fim. Ex.: `https://migrador.seudominio.com`
-- `SPOTIFY_CLIENT_ID` — Client ID do seu app no Spotify Developer Dashboard
+- `SPOTIFY_CLIENT_ID` — opcional: Client ID do app compartilhado do site no Spotify Developer Dashboard. Cada pessoa também pode usar um Client ID próprio pelo botão Conectar.
 - `GOOGLE_CLIENT_ID` — Client ID de um cliente OAuth do tipo **Aplicativo da Web**
 - `GOOGLE_CLIENT_SECRET` — Secret desse mesmo cliente Web
 - `SESSION_SECRET` — texto aleatório forte com pelo menos 32 caracteres (ideal: 64+)
@@ -76,6 +76,10 @@ Exemplo:
 
 O site usa Authorization Code + PKCE.
 
+Ao clicar em **Conectar**, a Web abre um tutorial para criar/configurar um aplicativo pessoal e informar seu **Client ID**. A Redirect URI correta vem da configuração do servidor e pode ser copiada no tutorial. O navegador lembra apenas esse identificador público; não solicita nem armazena Client Secret, tokens ou senhas no histórico/localStorage. A página de consentimento do Spotify mostra o nome cadastrado no aplicativo selecionado.
+
+O Client ID escolhido fica vinculado à tentativa de login e à sessão criptografada. A troca de código e as renovações posteriores usam esse mesmo aplicativo, mesmo quando o site possui outro `SPOTIFY_CLIENT_ID` configurado. Sessões antigas continuam usando o app compartilhado.
+
 ### Limitação importante para uso público
 
 Em **Development Mode**, o Spotify permite somente um pequeno grupo de usuários autorizados no app. Portanto, mesmo com o site público, contas fora da allowlist podem conseguir fazer login e depois receber `403` ao chamar a Web API.
@@ -83,6 +87,8 @@ Em **Development Mode**, o Spotify permite somente um pequeno grupo de usuários
 Para remover essa allowlist, o aplicativo do Spotify precisa estar em **Extended Quota Mode**. As regras atuais do Spotify para solicitar esse modo são bastante restritivas e voltadas a organizações/serviços já estabelecidos. Isso é uma limitação da plataforma Spotify, não do código do RHYFT.
 
 Enquanto o app Spotify estiver em Development Mode, use a versão Web como beta/teste e mantenha as versões nativas como alternativa para o público.
+
+Se aparecer **“The user is not registered for this application”**, o dono do aplicativo deve cadastrar o e-mail da conta Spotify em **User Management**, e a pessoa deve conectar novamente com essa conta. A Web agora explica isso e oferece o tutorial de Client ID pessoal. Criar um aplicativo próprio continua sujeito às exigências de conta/criação do Spotify; não remove cotas, limitações de playlists ou regras da plataforma. Uma conta recusada pela API não é mais apresentada como conectada após o callback.
 
 ## 4. Google OAuth
 

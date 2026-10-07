@@ -51,6 +51,9 @@
           const err = new Error(data?.error || `Erro HTTP ${response.status}`);
           err.code = data?.code;
           err.status = response.status;
+          if (err.code === 'SPOTIFY_403' && /User Management/.test(err.message)) {
+            document.dispatchEvent(new CustomEvent('rhyft:spotify-access-required', {detail: err.message}));
+          }
           throw err;
         }
         return data;
@@ -99,6 +102,7 @@
       state.session = data;
       connectedCard('spotify', data.spotify);
       connectedCard('youtube', data.youtube);
+      document.dispatchEvent(new CustomEvent('rhyft:session-loaded', {detail: data}));
       if (data.setup && !data.setup.ready) {
         showToast(`Configuração do site incompleta: ${data.setup.missing.join(', ')}`, true);
       }
@@ -112,7 +116,10 @@
     const p = new URLSearchParams(location.search);
     if (p.get('auth') === 'spotify-ok') showToast('Spotify conectado com sucesso.');
     if (p.get('auth') === 'google-ok') showToast('Google / YouTube conectado com sucesso.');
-    if (p.get('auth_error')) showToast(p.get('auth_error'), true);
+    if (p.get('auth_error')) {
+      showToast(p.get('auth_error'), true);
+      if (/User Management/.test(p.get('auth_error'))) document.dispatchEvent(new CustomEvent('rhyft:spotify-access-required', {detail: p.get('auth_error')}));
+    }
     if ([...p.keys()].some(k => k.startsWith('auth'))) history.replaceState({}, '', location.pathname);
   }
 

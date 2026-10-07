@@ -40,7 +40,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   const candidates = options.candidates || tracks.map((track, i) => ({id: `Music12345${i}`, title: track.name, name: track.name,
     channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`, url: `https://www.youtube.com/watch?v=Music12345${i}`}));
   const remote = new Set(options.existing ? [candidates[0].id] : []);
-  const stats = {creates: 0, writes: [], searches: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, weakPrimary: false};
+  const stats = {creates: 0, writes: [], searches: [], reads: 0, failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, weakPrimary: false, loginQueries: [], forbiddenSource: false};
   const historyRecord = {id: 'legacy-history', createdAt: new Date().toISOString(), direction,
     sourceInput: sourceId, destinationName: 'Destino antigo', destinationUrl: destUrl, added: 1, pending: 0, skipped: 1, status: 'completed'};
   if (options.legacyPending) {
@@ -53,8 +53,15 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url());
     const json = (data, status = 200) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
-    if (url.pathname === '/api/session') return json({setup: {ready: true}, spotify: {connected: true}, youtube: {connected: true}});
-    if (url.pathname === `/api/${origin}/playlist` && req.method() === 'GET') return json({id: sourceId, tracks});
+    if (url.pathname === '/api/session') return json({setup: {ready: true}, spotify: {connected: true, sharedClientAvailable: options.sharedAvailable ?? true, callbackUrl: options.callbackUrl || `${baseUrl}/api/spotify/callback`}, youtube: {connected: true}});
+    if (url.pathname === '/api/spotify/start') {
+      stats.loginQueries.push(url.searchParams.get('client_id'));
+      return json({authorizationFixture: true});
+    }
+    if (url.pathname === `/api/${origin}/playlist` && req.method() === 'GET') {
+      if (stats.forbiddenSource) return json({code: 'SPOTIFY_403', error: 'Esta conta não está autorizada no aplicativo Spotify. Adicione-a em User Management ou use seu próprio Client ID.'}, 403);
+      return json({id: sourceId, tracks});
+    }
     if (url.pathname === `/api/${target}/playlist` && req.method() === 'POST') {
       stats.creates++; return json({id: destId, url: destUrl, name: 'Destino novo'}, 201);
     }
@@ -273,6 +280,69 @@ test('uses a targeted second search only when the first result is weak', async (
     assert.deepEqual(f.stats.searches, ['Artista Horizonte', '"Artista" "Horizonte"', 'Artista Tempestade']);
     assert.equal((await f.history())[0].pending, 0);
     assert.equal(f.remote.size, 2);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+
+test('Spotify connect opens a tutorial, rejects invalid input and remembers a personal Client ID', async () => {
+  const f = await fixture('spotify-youtube', {sharedAvailable: false});
+  const clientId = 'a'.repeat(32);
+  try {
+    await f.page.locator('#spotify-connect').click();
+    assert.equal(await f.page.locator('#spotify-setup').isVisible(), true);
+    assert.equal(await f.page.locator('#spotify-tutorial').getAttribute('open'), '');
+    assert.equal(await f.page.locator('#spotify-shared-option').isHidden(), true);
+    await f.page.locator('#spotify-client-id').fill('not-a-client-id');
+    await f.page.getByRole('button', {name: 'Conectar com meu Client ID'}).click();
+    assert.match(await f.page.locator('#spotify-setup-error').innerText(), /32 caracteres/);
+    assert.equal(f.stats.loginQueries.length, 0);
+    await f.page.locator('#spotify-client-id').fill(clientId);
+    await f.page.getByRole('button', {name: 'Conectar com meu Client ID'}).click();
+    await f.page.waitForURL(/api\/spotify\/start/);
+    assert.deepEqual(f.stats.loginQueries, [clientId]);
+    await f.page.goto(`${baseUrl}/migrar.html`);
+    await f.page.locator('#spotify-connect').click();
+    assert.equal(await f.page.locator('#spotify-client-id').inputValue(), clientId);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('the shared Spotify app remains an explicit alternative', async () => {
+  const f = await fixture();
+  try {
+    await f.page.locator('#spotify-connect').click();
+    await f.page.locator('#spotify-shared-connect').click();
+    await f.page.waitForURL(/api\/spotify\/start/);
+    assert.deepEqual(f.stats.loginQueries, [null]);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('the tutorial copies the canonical callback URI from server configuration', async () => {
+  const callbackUrl = 'https://rhyft.netlify.app/api/spotify/callback';
+  const f = await fixture('spotify-youtube', {callbackUrl});
+  try {
+    await f.page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async value => window.copiedRedirect = value}});
+    });
+    await f.page.locator('#spotify-connect').click();
+    assert.equal(await f.page.locator('#spotify-redirect').inputValue(), callbackUrl);
+    await f.page.locator('#spotify-copy-redirect').click();
+    await f.page.getByRole('button', {name: 'Copiado', exact: true}).waitFor();
+    assert.equal(await f.page.evaluate(() => window.copiedRedirect), callbackUrl);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('a development-mode rejection opens actionable Spotify setup', async () => {
+  const f = await fixture();
+  try {
+    f.stats.forbiddenSource = true;
+    await f.page.locator('#start-migration').click();
+    await f.page.locator('#spotify-setup').waitFor({state: 'visible'});
+    assert.match(await f.page.locator('#spotify-setup-error').innerText(), /User Management/);
+    assert.equal(f.stats.creates, 0);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
