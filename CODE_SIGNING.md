@@ -27,6 +27,6 @@ Official downloads are available from:
 
 Privacy policy:
 
-- https://migrador-playlists.netlify.app/privacidade.html
+- https://rhyft.netlify.app/privacidade.html
 
 RHYFT only communicates with external services when required for features explicitly requested by the user, such as connecting Spotify or YouTube/Google accounts and migrating playlists between those services.

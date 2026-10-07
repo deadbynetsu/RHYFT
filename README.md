@@ -4,8 +4,8 @@
 
 Migre playlists entre **Spotify** e **YouTube Music** nos dois sentidos — pela Web, Windows ou Android.
 
-[![Site](https://img.shields.io/badge/SITE-RHYFT-00D084?style=for-the-badge&logo=netlify&logoColor=white)](https://migrador-playlists.netlify.app/)
-[![Migrar online](https://img.shields.io/badge/MIGRAR-ONLINE-7C5CFF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://migrador-playlists.netlify.app/migrar.html)
+[![Site](https://img.shields.io/badge/SITE-RHYFT-00D084?style=for-the-badge&logo=netlify&logoColor=white)](https://rhyft.netlify.app/)
+[![Migrar online](https://img.shields.io/badge/MIGRAR-ONLINE-7C5CFF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://rhyft.netlify.app/migrar.html)
 [![Windows](https://img.shields.io/badge/BAIXAR-WINDOWS-0078D4?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe)
 [![Android](https://img.shields.io/badge/BAIXAR-ANDROID-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk)
 
@@ -39,7 +39,7 @@ Quando uma correspondência não é confiável, o RHYFT não escolhe no escuro: 
 
 | Plataforma | Experiência | Acesso |
 |---|---|---|
-| 🌐 **Web** | Sem instalação, histórico salvo no navegador e revisão de faixas incertas | [Abrir RHYFT Online](https://migrador-playlists.netlify.app/migrar.html) |
+| 🌐 **Web** | Sem instalação, histórico salvo no navegador e revisão de faixas incertas | [Abrir RHYFT Online](https://rhyft.netlify.app/migrar.html) |
 | 🪟 **Windows** | App nativo em um único `RHYFT.exe`, progresso, pausa/retomada e histórico local | [Baixar RHYFT.exe](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe) |
 | 🤖 **Android** | Interface mobile, autenticação de contas e migração direto pelo celular | [Baixar APK](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk) |
 
@@ -98,7 +98,7 @@ O RHYFT não precisa da sua senha do Spotify ou Google. A autenticação usa os 
 - Nos **apps nativos**, configurações, tokens e progresso ficam no dispositivo do usuário.
 - Credenciais privadas e arquivos locais de autenticação não são versionados no repositório.
 
-[Política de Privacidade](https://migrador-playlists.netlify.app/privacidade.html) · [Termos de Serviço](https://migrador-playlists.netlify.app/termos.html)
+[Política de Privacidade](https://rhyft.netlify.app/privacidade.html) · [Termos de Serviço](https://rhyft.netlify.app/termos.html)
 
 ---
 
@@ -181,6 +181,6 @@ Distribuído sob a licença **MIT**. Veja [LICENSE](./LICENSE).
 
 Feito por **[deadbynetsu](https://github.com/deadbynetsu)**
 
-[Site](https://migrador-playlists.netlify.app/) · [Migrar online](https://migrador-playlists.netlify.app/migrar.html) · [Releases](https://github.com/deadbynetsu/RHYFT/releases/latest) · [Instagram](https://www.instagram.com/deadbynetsu.dev/) · [TikTok](https://www.tiktok.com/@deadbynetsu) · [YouTube](https://www.youtube.com/@DeadbyNeTsU)
+[Site](https://rhyft.netlify.app/) · [Migrar online](https://rhyft.netlify.app/migrar.html) · [Releases](https://github.com/deadbynetsu/RHYFT/releases/latest) · [Instagram](https://www.instagram.com/deadbynetsu.dev/) · [TikTok](https://www.tiktok.com/@deadbynetsu) · [YouTube](https://www.youtube.com/@DeadbyNeTsU)
 
 </div>
