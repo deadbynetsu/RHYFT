@@ -1,4 +1,4 @@
-"""Accessible first-run language chooser; the main UI is built only after selection."""
+"""Language chooser used before the desktop UI exists and from settings."""
 import customtkinter as ctk
 from pathlib import Path
 import sys
@@ -123,21 +123,41 @@ class LanguageDialog(ctk.CTkToplevel):
             self.on_done(None)
 
 
-def ensure_language(root, directory):
+def prepare_language_before_app(directory, dialog_setup=None):
+    """Resolve the language before the real RHYFT window is created.
+
+    The first-run chooser owns a short-lived temporary CTk root. That root is
+    always destroyed before RHYFTApp is instantiated, preventing a hidden or
+    half-initialized main window from surviving after the chooser closes.
+
+    dialog_setup exists only so the Windows regression test can schedule an
+    automatic click without changing the production flow.
+    """
     preference = LanguagePreference(directory)
     saved = preference.read()
     if saved:
         set_language(saved)
-        return
-    root.withdraw()
+        return saved
+
     result = []
-    dialog = LanguageDialog(root, preference, detect_language(), result.append, first_run=True)
-    root.wait_window(dialog)
-    if not result or result[0] is None:
-        root.destroy()
-        raise SystemExit(0)
-    set_language(result[0])
-    root.deiconify()
+    root = ctk.CTk()
+    root.withdraw()
+    try:
+        dialog = LanguageDialog(root, preference, detect_language(), result.append, first_run=True)
+        if dialog_setup is not None:
+            dialog_setup(dialog)
+        root.wait_window(dialog)
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+    selected = result[0] if result else None
+    if selected is None:
+        return None
+    set_language(selected)
+    return selected
 
 
 def open_language_settings(root, directory):
