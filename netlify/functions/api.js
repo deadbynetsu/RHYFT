@@ -15,8 +15,8 @@ const SPOTIFY_SCOPE = [
 ].join(' ');
 
 class HttpError extends Error {
-  constructor(status, message, code = 'API_ERROR') {
-    super(message); this.status = status; this.code = code;
+  constructor(status, message, code = 'API_ERROR', details = undefined) {
+    super(message); this.status = status; this.code = code; this.details = details;
   }
 }
 
@@ -139,14 +139,15 @@ async function readJson(response) {
 function providerMessage(provider, status, data) {
   if (provider === 'google') {
     const reason = data?.error?.errors?.[0]?.reason || data?.error?.status || '';
-    const message = data?.error?.message || data?.error_description || data?.error || data?.raw;
-    if (/quota|dailyLimit|rateLimit/i.test(`${reason} ${message || ''}`)) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
+    const message = data?.error?.message || data?.error_description || (typeof data?.error === 'string' ? data.error : '');
+    if (/quota|dailyLimit/i.test(`${reason} ${message || ''}`)) return 'A cota do YouTube para este projeto foi atingida. Tente novamente mais tarde.';
+    if (status === 429 || /rateLimit/i.test(reason)) return 'O YouTube limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
     if (status === 401) return 'A sessão do Google expirou ou foi revogada. Conecte o Google / YouTube novamente.';
     if (status === 403) return message || 'O Google recusou esta operação. Verifique as permissões concedidas ao aplicativo.';
     return message || `O Google respondeu com erro ${status}.`;
   }
-  const message = data?.error?.message || data?.error_description || data?.error?.status || data?.raw;
-  if (status === 403 && /user (?:is )?not registered|not registered for this application/i.test(String(message || ''))) {
+  const message = data?.error?.message || data?.error_description || data?.error?.status;
+  if (status === 403 && /user (?:is )?not registered|not registered for this application/i.test(`${message || ''} ${data?.raw || ''}`)) {
     return 'Esta conta não está autorizada no aplicativo Spotify usado no login. O dono do app precisa adicioná-la em User Management no Spotify Developers, ou você pode conectar com seu próprio Client ID no RHYFT.';
   }
   if (status === 429) return 'O Spotify limitou temporariamente as requisições. Aguarde um pouco e tente novamente.';
@@ -155,26 +156,77 @@ function providerMessage(provider, status, data) {
   return message || `O Spotify respondeu com erro ${status}.`;
 }
 
+function providerContext(url, options, provider) {
+  // Only an operation name leaves the server; URLs, queries and credentials don't.
+  const path = new URL(url).pathname;
+  const method = (options?.method || 'GET').toUpperCase();
+  let operation = 'request';
+  if (path.endsWith('/search')) operation = 'search';
+  else if (path.endsWith('/videos')) operation = 'track-details';
+  else if (path.endsWith('/token')) operation = 'auth';
+  else if (/\/(playlistItems|playlists\/[^/]+\/items)$/.test(path)) operation = method === 'GET' ? 'playlist-read' : 'playlist-add';
+  else if (/\/playlists(?:\/[^/]+)?$/.test(path)) operation = method === 'GET' ? 'playlist-read' : 'playlist-create';
+  else if (/\/(me|channels)$/.test(path)) operation = 'account';
+  return { provider: provider === 'google' ? 'youtube' : provider, operation, method };
+}
+
+function providerReason(data) {
+  const value = data?.error?.errors?.[0]?.reason || data?.error?.status || data?.error;
+  return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(value) ? value : undefined;
+}
+
 async function providerFetch(url, options, provider) {
   // Only reads can be repeated safely. A failed POST may already have been applied.
-  const attempts = (options?.method || 'GET').toUpperCase() === 'GET' ? 2 : 1;
+  const context = providerContext(url, options, provider);
+  const attempts = context.method === 'GET' ? 2 : 1;
+  const label = provider === 'google' ? 'YouTube / Google' : 'Spotify';
   for (let attempt = 0; attempt < attempts; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 7000);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       const data = await readJson(response);
-      if (!response.ok) throw new HttpError(response.status, providerMessage(provider, response.status, data), `${provider.toUpperCase()}_${response.status}`);
+      if (!response.ok) {
+        const reason = providerReason(data);
+        const originalMessage = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.error === 'string' ? data.error : '';
+        const accessOrLimit = [401, 403, 429].includes(response.status) || /quota|dailyLimit|rateLimit/i.test(reason || '');
+        const aborted = !accessOrLimit && (reason === 'ABORTED' || /\b(?:aborted|cancelled|canceled)\b/i.test(originalMessage || data?.raw || ''));
+        const timeout = !accessOrLimit && reason === 'DEADLINE_EXCEEDED';
+        const genericAbort = /^(?:(?:the )?(?:operation|request) (?:was |has been )?)?(?:aborted|cancelled|canceled)[.!]?$/i;
+        const message = timeout ? `O ${label} informou que o tempo de resposta foi excedido.`
+          : aborted ? originalMessage && !genericAbort.test(originalMessage.trim())
+            ? `O ${label} interrompeu a operação. Detalhe informado: ${originalMessage}`
+            : `O ${label} interrompeu a operação antes de concluir; não informou o motivo da interrupção.`
+          : providerMessage(provider, response.status, data);
+        const error = new HttpError(response.status, message, `${provider.toUpperCase()}_${response.status}`,
+          { ...context, cause: timeout ? 'timeout' : aborted ? 'aborted' : 'http', upstreamStatus: response.status, reason, attempts: attempt + 1 });
+        // Access/quota errors must remain final even if their message mentions an abort.
+        error.retryable = !accessOrLimit && ([500, 502, 503, 504].includes(response.status) || aborted || timeout);
+        throw error;
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data) || data.raw !== undefined) {
+        const error = new HttpError(502, `O ${label} devolveu uma resposta inválida.`, 'PROVIDER_INVALID_RESPONSE',
+          { ...context, cause: 'invalid-response', upstreamStatus: response.status, attempts: attempt + 1 });
+        error.retryable = true;
+        throw error;
+      }
       return data;
     } catch (error) {
-      const temporary = !(error instanceof HttpError) || [500, 502, 503, 504].includes(error.status);
+      const temporary = !(error instanceof HttpError) || error.retryable;
       if (!temporary) throw error;
       if (attempt + 1 === attempts) {
         if (error instanceof HttpError) throw error;
-        const timeout = controller.signal.aborted || ['AbortError', 'TimeoutError'].includes(error.name);
-        throw new HttpError(timeout ? 504 : 502,
-          timeout ? 'A plataforma demorou para responder. Retome a migração para tentar novamente.' : 'A conexão com a plataforma falhou temporariamente. Retome a migração para tentar novamente.',
-          timeout ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE');
+        const timeout = controller.signal.aborted || error.name === 'TimeoutError';
+        const aborted = !timeout && error.name === 'AbortError';
+        const failure = new HttpError(timeout ? 504 : 502,
+          timeout ? `O ${label} não respondeu dentro do prazo. Retome a migração para tentar novamente.`
+            : aborted ? `A comunicação com o ${label} foi interrompida antes de receber a resposta. Retome para tentar novamente.`
+            : `A conexão com o ${label} falhou. Retome a migração para tentar novamente.`,
+          timeout ? 'PROVIDER_TIMEOUT' : aborted ? 'PROVIDER_ABORTED' : 'PROVIDER_UNAVAILABLE',
+          { ...context, cause: timeout ? 'timeout' : aborted ? 'aborted' : 'network', attempts: attempt + 1,
+            ...(controller.signal.aborted ? { timeoutMs: 7000 } : {}) });
+        failure.retryable = true;
+        throw failure;
       }
     } finally {
       clearTimeout(timer);
@@ -209,9 +261,13 @@ async function refreshSpotify(session) {
   const clientId = spotifyClientId(session?.client_id || process.env.SPOTIFY_CLIENT_ID);
   if (!session?.refresh_token) throw new HttpError(401, 'Spotify não conectado.', 'AUTH_REQUIRED');
   const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: session.refresh_token, client_id: clientId });
-  const response = await fetch(`${SPOTIFY_ACCOUNTS}/api/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
-  const data = await readJson(response);
-  if (!response.ok) throw new HttpError(401, 'Não consegui renovar a sessão do Spotify. Conecte novamente.', 'AUTH_REQUIRED');
+  let data;
+  try {
+    data = await providerFetch(`${SPOTIFY_ACCOUNTS}/api/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }, 'spotify');
+  } catch (error) {
+    if ([400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Spotify. Conecte novamente.', 'AUTH_REQUIRED', error.details);
+    throw error;
+  }
   return { ...session, ...data, client_id: clientId, refresh_token: data.refresh_token || session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
 }
 
@@ -238,9 +294,13 @@ async function refreshGoogle(session) {
   const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = requireEnv('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET');
   if (!session?.refresh_token) throw new HttpError(401, 'Google / YouTube não conectado.', 'AUTH_REQUIRED');
   const body = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET, refresh_token: session.refresh_token, grant_type: 'refresh_token' });
-  const response = await fetch(GOOGLE_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
-  const data = await readJson(response);
-  if (!response.ok) throw new HttpError(401, 'Não consegui renovar a sessão do Google. Conecte novamente.', 'AUTH_REQUIRED');
+  let data;
+  try {
+    data = await providerFetch(GOOGLE_TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }, 'google');
+  } catch (error) {
+    if ([400, 401, 403].includes(error.status)) throw new HttpError(401, 'Não consegui renovar a sessão do Google. Conecte novamente.', 'AUTH_REQUIRED', error.details);
+    throw error;
+  }
   return { ...session, ...data, refresh_token: session.refresh_token, expires_at: Date.now() + Number(data.expires_in || 3600) * 1000 };
 }
 
@@ -525,6 +585,7 @@ exports.handler = async (event) => {
     const status = error instanceof HttpError ? error.status : 500;
     const message = error instanceof HttpError ? error.message : 'O servidor encontrou um erro inesperado.';
     if (!(error instanceof HttpError)) console.error(error);
-    return json(status, { error: message, code: error.code || 'INTERNAL_ERROR' });
+    return json(status, { error: message, code: error.code || 'INTERNAL_ERROR',
+      ...(error instanceof HttpError ? { details: error.details, retryable: error.retryable } : {}) });
   }
 };

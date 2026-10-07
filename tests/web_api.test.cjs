@@ -5,10 +5,10 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const path = require('node:path');
 
-function backend(fetch, env = {}) {
+function backend(fetch, env = {}, runtime = {}) {
   const context = vm.createContext({
     require, exports: {}, fetch, AbortController, URL, URLSearchParams, Buffer, console,
-    setTimeout, clearTimeout, process: { env: { SESSION_SECRET: crypto.randomBytes(32).toString('hex'), ...env } }
+    setTimeout, clearTimeout, process: { env: { SESSION_SECRET: crypto.randomBytes(32).toString('hex'), ...env } }, ...runtime
   });
   const code = fs.readFileSync(path.join(__dirname, '../netlify/functions/api.js'), 'utf8');
   vm.runInContext(`${code}\nexports.testing = {providerFetch, seal, unseal, refreshSpotify};`, context);
@@ -39,7 +39,7 @@ test('a POST with a lost response is not blindly repeated', async () => {
   let calls = 0;
   const api = backend(async () => {calls++; throw new DOMException('Aborted', 'AbortError');});
   await assert.rejects(api.testing.providerFetch('https://example.invalid', {method: 'POST'}, 'google'),
-    error => error.status === 504 && error.code === 'PROVIDER_TIMEOUT');
+    error => error.status === 502 && error.code === 'PROVIDER_ABORTED' && error.details.cause === 'aborted' && !error.details.timeoutMs);
   assert.equal(calls, 1);
 });
 
@@ -49,6 +49,114 @@ test('quota errors do not trigger retries', async () => {
   await assert.rejects(api.testing.providerFetch('https://example.invalid', {}, 'google'),
     error => error.status === 403 && /cota/.test(error.message));
   assert.equal(calls, 1);
+});
+
+test('an upstream ABORTED response preserves its reason and operation without inventing a timeout', async () => {
+  let calls = 0;
+  const api = backend(async () => {
+    calls++;
+    return response(409, {error: {message: 'The operation was aborted.', status: 'ABORTED'}});
+  });
+  const session = api.testing.seal({access_token: 'private-fixture-token', expires_at: Date.now() + 3600000});
+  const result = await api.handler(event('youtube/search', {q: 'private-query'}, `g_session=${session}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 409);
+  assert.equal(calls, 2);
+  assert.equal(data.code, 'GOOGLE_409');
+  assert.equal(data.retryable, true);
+  assert.deepEqual(data.details, {provider: 'youtube', operation: 'search', method: 'GET', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 2});
+  assert.match(data.error, /interrompeu.*não informou o motivo/);
+  assert.doesNotMatch(result.body, /private-fixture-token|private-query|googleapis\.com|cookie|timeoutMs/);
+});
+
+test('an abort with a specific provider explanation keeps that explanation', async () => {
+  const api = backend(async () => response(409, {error: {message: 'The operation was aborted because the resource changed.', status: 'ABORTED'}}));
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+    assert.match(error.message, /resource changed/);
+    assert.doesNotMatch(error.message, /não informou o motivo/);
+    return true;
+  });
+});
+
+test('Spotify plaintext development-mode rejections still explain account authorization', async () => {
+  const api = backend(async () => new Response('The user is not registered for this application. Please check your settings.', {status: 403}));
+  await assert.rejects(api.testing.providerFetch('https://api.spotify.com/v1/me', {}, 'spotify'), error => {
+    assert.equal(error.code, 'SPOTIFY_403');
+    assert.match(error.message, /User Management/);
+    assert.equal(error.retryable, false);
+    return true;
+  });
+});
+
+test('a server deadline is reported separately from an unexplained AbortError', async () => {
+  let calls = 0;
+  const api = backend(async (_url, options) => {
+    calls++;
+    await new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {once: true}));
+  }, {}, {setTimeout: (fn, ms) => setTimeout(fn, ms === 7000 ? 1 : ms)});
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/playlistItems', {method: 'POST'}, 'google'), error => {
+    assert.equal(error.status, 504);
+    assert.equal(error.code, 'PROVIDER_TIMEOUT');
+    assert.equal(error.details.cause, 'timeout');
+    assert.equal(error.details.timeoutMs, 7000);
+    assert.equal(error.details.operation, 'playlist-add');
+    assert.equal(error.details.attempts, 1);
+    return true;
+  });
+  assert.equal(calls, 1);
+});
+
+test('video detail failures identify the actual failing call inside a search', async () => {
+  const api = backend(async url => url.includes('/search?')
+    ? response(200, {items: [{id: {videoId: 'Video123456'}}]})
+    : response(503, {error: {message: 'Service unavailable', status: 'UNAVAILABLE'}}));
+  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
+  const result = await api.handler(event('youtube/search', {q: 'Song'}, `g_session=${session}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 503);
+  assert.equal(data.details.operation, 'track-details');
+  assert.equal(data.details.reason, 'UNAVAILABLE');
+  assert.equal(data.details.attempts, 2);
+});
+
+test('a non-JSON provider response is retried without leaking the response body', async () => {
+  let calls = 0;
+  const api = backend(async () => {calls++; return new Response('<html>private-proxy-details</html>', {status: 200});});
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search?q=private', {}, 'google'), error => {
+    assert.equal(error.code, 'PROVIDER_INVALID_RESPONSE');
+    assert.equal(error.details.attempts, 2);
+    assert.doesNotMatch(error.message, /private/);
+    return true;
+  });
+  assert.equal(calls, 2);
+});
+
+for (const reason of ['quotaExceeded', 'rateLimitExceeded']) {
+  test(`${reason} stays actionable even if the provider message says aborted`, async () => {
+    let calls = 0;
+    const api = backend(async () => {calls++; return response(403, {error: {message: 'The operation was aborted.', errors: [{reason}]}});});
+    await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search', {}, 'google'), error => {
+      assert.equal(error.retryable, false);
+      assert.equal(error.details.reason, reason);
+      assert.match(error.message, reason === 'quotaExceeded' ? /cota/ : /limitou temporariamente/);
+      return true;
+    });
+    assert.equal(calls, 1);
+  });
+}
+
+test('a refresh connection failure retains authentication context instead of becoming an internal error', async () => {
+  let calls = 0;
+  const api = backend(async () => {calls++; throw new TypeError('private-network-internals');}, {SPOTIFY_CLIENT_ID: 'b'.repeat(32)});
+  const session = api.testing.seal({access_token: 'old-token', refresh_token: 'private-refresh', expires_at: 0});
+  const result = await api.handler(event('spotify/search', {q: 'Song'}, `sp_session=${session}`));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 502);
+  assert.equal(data.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(data.details.operation, 'auth');
+  assert.equal(data.details.provider, 'spotify');
+  assert.equal(calls, 1);
+  assert.doesNotMatch(result.body, /private-network|private-refresh|old-token/);
 });
 
 for (const provider of ['spotify', 'youtube']) {

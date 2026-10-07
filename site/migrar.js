@@ -29,8 +29,43 @@
     showToast.timer = setTimeout(() => ui.toast.className = 'toast', 5000);
   }
 
+  const operations = {
+    search: 'buscar a música', 'track-details': 'consultar os detalhes das músicas',
+    'playlist-read': 'ler a playlist', 'playlist-create': 'criar a playlist',
+    'playlist-add': 'adicionar à playlist', auth: 'renovar a sessão',
+    account: 'verificar a conta', session: 'verificar as conexões', request: 'consultar a plataforma'
+  };
+
+  function requestContext(path, method) {
+    const route = path.split('?')[0];
+    const provider = route.startsWith('/youtube/') ? 'youtube' : route.startsWith('/spotify/') ? 'spotify' : 'site';
+    const operation = route === '/session' ? 'session' : route.endsWith('/search') ? 'search'
+      : /\/playlist\/items?$/.test(route) ? 'playlist-add'
+      : route.endsWith('/playlist/state') || method === 'GET' && route.endsWith('/playlist') ? 'playlist-read'
+      : route.endsWith('/playlist') ? 'playlist-create' : 'request';
+    return {provider, operation};
+  }
+
+  function describeFailure(error, technical = true) {
+    if (!error.context) return error.message;
+    const details = error.details || {};
+    const provider = {youtube: 'YouTube / Google', spotify: 'Spotify', site: 'RHYFT'}[details.provider || error.context.provider] || 'RHYFT';
+    const operation = operations[details.operation] || operations[error.context.operation] || operations.request;
+    let message = `Falha ao ${operation} (${provider}): ${error.message}`;
+    if (technical) {
+      const codes = [`HTTP ${error.status}`, error.code];
+      if (details.reason) codes.push(`motivo: ${details.reason}`);
+      if (details.upstreamStatus && details.upstreamStatus !== error.status) codes.push(`plataforma: HTTP ${details.upstreamStatus}`);
+      if (details.timeoutMs) codes.push(`prazo: ${details.timeoutMs / 1000}s`);
+      if (details.attempts) codes.push(`tentativas no servidor: ${details.attempts}`);
+      if (error.attempts) codes.push(`tentativas no navegador: ${error.attempts}`);
+      message += ` [${codes.filter(Boolean).join(' · ')}]`;
+    }
+    return message;
+  }
+
   async function api(path, options = {}) {
-    const init = { method: options.method || 'GET', credentials: 'same-origin', headers: {} };
+    const init = { method: (options.method || 'GET').toUpperCase(), credentials: 'same-origin', headers: {} };
     if (options.body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
@@ -42,15 +77,24 @@
       try {
         const response = await fetch(`/api${path}`, { ...init, signal: controller.signal });
         let data;
-        try { data = await response.json(); } catch {
+        try { data = await response.json(); } catch (error) {
+          if (controller.signal.aborted || ['AbortError', 'TimeoutError'].includes(error.name)) throw error;
           const err = new Error('O servidor não retornou uma resposta válida. Retome a migração para tentar novamente.');
           err.status = response.ok ? 502 : response.status;
+          err.code = 'WEB_INVALID_RESPONSE';
           throw err;
         }
         if (!response.ok) {
           const err = new Error(data?.error || `Erro HTTP ${response.status}`);
           err.code = data?.code;
           err.status = response.status;
+          err.details = data?.details;
+          err.retryable = data?.retryable;
+          if (/^(?:(?:the )?(?:operation|request) (?:was |has been )?)?(?:aborted|cancelled|canceled)[.!]?$/i.test(err.message.trim())) {
+            err.message = err.code === 'PROVIDER_TIMEOUT'
+              ? 'A plataforma não respondeu dentro do prazo. Retome para tentar novamente.'
+              : 'A plataforma interrompeu a operação; não informou o motivo da interrupção. Retome para tentar novamente.';
+          }
           if (err.code === 'SPOTIFY_403' && /User Management/.test(err.message)) {
             document.dispatchEvent(new CustomEvent('rhyft:spotify-access-required', {detail: err.message}));
           }
@@ -59,12 +103,19 @@
         return data;
       } catch (error) {
         if (!error.status) {
-          error = new Error(error.name === 'AbortError'
-            ? 'A requisição demorou para responder. O progresso foi preservado; retome para tentar novamente.'
-            : 'A conexão falhou temporariamente. O progresso foi preservado; retome para tentar novamente.');
-          error.status = 502;
+          const timeout = controller.signal.aborted || error.name === 'TimeoutError';
+          const aborted = error.name === 'AbortError';
+          error = new Error(timeout ? 'O servidor não respondeu dentro do prazo. Retome para tentar novamente.'
+            : aborted ? 'A comunicação com o servidor foi interrompida. Retome para tentar novamente.'
+            : 'A conexão com o servidor falhou. Retome para tentar novamente.');
+          error.status = timeout ? 504 : 502;
+          error.code = timeout ? 'WEB_TIMEOUT' : aborted ? 'WEB_ABORTED' : 'WEB_NETWORK';
+          error.details = timeout ? {timeoutMs: 30000} : {};
         }
+        error.context = requestContext(path, init.method);
+        error.attempts = attempt + 1;
         if (!isTemporary(error) || attempt + 1 === attempts) throw error;
+        if (state.running || state.reviewing) log(`⚠ ${describeFailure(error)} Nova tentativa de leitura (${attempt + 2}/${attempts})…`, 'warn');
       } finally { clearTimeout(timer); }
       await sleep(500);
       if (state.running) await checkpoint();
@@ -72,7 +123,7 @@
   }
 
   function isTemporary(error) {
-    return [500, 502, 503, 504].includes(error.status);
+    return typeof error.retryable === 'boolean' ? error.retryable : [500, 502, 503, 504].includes(error.status);
   }
 
   function connectedCard(provider, info) {
@@ -275,15 +326,23 @@
       } catch (error) {
         if (!isTemporary(error)) throw error;
         // Never repeat a POST blindly: it may have succeeded despite its error.
+        log(`⚠ ${describeFailure(error)} Conferindo se o envio chegou à playlist…`, 'warn');
         await sleep(500);
-        state.usedIds = await destinationIds(kind);
+        try { state.usedIds = await destinationIds(kind); }
+        catch (verificationError) {
+          verificationError.message += ' Não foi possível confirmar o envio anterior; retome pela mesma origem ou pelo histórico.';
+          throw verificationError;
+        }
         for (const entry of fresh) {
           if (state.usedIds.has(entry.candidate.id)) state.processed[sourceKey(entry.source)] = entry.candidate.id;
         }
         state.added = state.usedIds.size;
         state.inFlight = fresh.filter(entry => !state.usedIds.has(entry.candidate.id));
         saveProgress();
-        if (state.inFlight.length) throw new Error(`${error.message} Não foi possível confirmar o envio de todas as faixas. Retome pela mesma origem ou pelo histórico.`);
+        if (state.inFlight.length) {
+          error.message += ' Não foi possível confirmar o envio de todas as faixas. Retome pela mesma origem ou pelo histórico.';
+          throw error;
+        }
         log('✓ Envio confirmado na playlist após uma falha de resposta.', 'ok');
       }
     }
@@ -374,7 +433,7 @@
         }
       } catch (error) {
         if (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /quota|cota|limit|salvar o progresso/i.test(error.message)) throw error;
-        state.skipped++; log(`  ✕ ${error.message}`, 'error');
+        state.skipped++; log(`  ✕ ${describeFailure(error)}`, 'error');
         saveProgress();
       }
       progress(i + 1, total, track.name);
@@ -434,7 +493,7 @@
         }
       } catch (error) {
         if (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /salvar o progresso/i.test(error.message)) throw error;
-        state.skipped++; log(`  ✕ ${error.message}`, 'error');
+        state.skipped++; log(`  ✕ ${describeFailure(error)}`, 'error');
         saveProgress();
       }
       progress(i + 1, total, track.name);
@@ -463,7 +522,8 @@
       renderPending(); updateResult();
       showToast(`Adicionada: ${candidate.title || candidate.name}`);
     } catch (error) {
-      buttons.forEach(b => b.disabled = false); showToast(error.message, true);
+      log(`✕ ${item.source.name || item.source.title}: ${describeFailure(error)}`, 'error');
+      buttons.forEach(b => b.disabled = false); showToast(describeFailure(error, false), true);
     } finally {
       state.reviewing = false; ui.start.disabled = false;
     }
@@ -535,10 +595,14 @@
       if (error instanceof Cancelled) {
         ui.progressTitle.textContent = 'Migração cancelada'; log('Migração cancelada. A playlist já criada não foi apagada.', 'warn');
       } else {
-        ui.progressTitle.textContent = 'Migração interrompida'; log(`✕ ${error.message}`, 'error'); showToast(error.message, true);
+        ui.progressTitle.textContent = 'Migração interrompida'; log(`✕ ${describeFailure(error)}`, 'error');
+        showToast(describeFailure(error, false), true);
       }
       if (state.destination) {
-        try { saveProgress(error instanceof Cancelled ? 'cancelled' : 'interrupted'); }
+        try {
+          saveProgress(error instanceof Cancelled ? 'cancelled' : 'interrupted');
+          if (!(error instanceof Cancelled)) log('O progresso foi salvo. Clique em Iniciar migração com a mesma origem ou retome pelo histórico.', 'warn');
+        }
         catch (storageError) { log(storageError.message, 'error'); }
         renderPending(); updateResult();
       }
