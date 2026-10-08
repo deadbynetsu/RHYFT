@@ -10,7 +10,6 @@ própria e fala com a tela por uma fila (self.fila), esvaziada por uma tarefa da
 """
 from rhyft_i18n import tr
 import asyncio
-import glob
 import os
 import queue
 import re
@@ -88,6 +87,7 @@ class Tela:
         self.fila = queue.Queue()
         self.motor = MotorCelular(self)
         self.controle = None
+        self._historico_selecionado = None
         self.modo = 'sp_yt'
         self.launcher = ft.UrlLauncher()
         self.clipboard = ft.Clipboard()
@@ -275,7 +275,10 @@ class Tela:
         self.limpar_log()
         self.motor._ui_progresso_reset('Conectando...', 'Lendo as músicas da playlist.')
         alvo = self.motor.processo_migracao_reversa if reverso else self.motor.processo_migracao
-        threading.Thread(target=alvo, args=(origem, destino, self.controle), daemon=True).start()
+        argumentos = (origem, destino, self.controle)
+        if self._historico_selecionado is not None:
+            argumentos += (self._historico_selecionado['arquivo'],)
+        threading.Thread(target=alvo, args=argumentos, daemon=True).start()
 
     def migracao_terminada(self, controle):
         if self.controle is controle:
@@ -515,27 +518,116 @@ class Tela:
                      ft.TextButton(content=tr('Fechar'), on_click=fechar)]))
 
     # ---------------------------------------------------------------- histórico
+    def _historico_disponivel(self):
+        if self.controle is None:
+            return True
+        self.mensagem(tr('Aviso'), tr('Aguarde a migração atual terminar antes de alterar o histórico.'))
+        return False
+
+    def _registro_historico_atual(self, registro):
+        try:
+            atual = next((item for item in nuc.listar_historico_migracoes()
+                          if item.get('arquivo') == registro.get('arquivo')), None)
+        except Exception:
+            nuc.registrar_erro_em_arquivo()
+            atual = None
+        if not atual or not atual.get('valido') or atual.get('direcao') not in ('sp_yt', 'yt_sp'):
+            self.mensagem(tr('Aviso'), tr('Não consegui ler este progresso salvo. '
+                                         'Ele pode ter sido removido ou estar inválido.'))
+            return None
+        return atual
+
+    def _iniciar_historico(self, registro, origem, e=None):
+        if not self._historico_disponivel():
+            return
+        self.seg.selected = [registro['direcao']]
+        self.trocar_modo(None)
+        self.campo_origem.value = origem
+        self.campo_destino.value = registro.get('nome_playlist') or ''
+        # Chama também os wrappers de login do entrypoint Android. O arquivo
+        # selecionado só é usado nesta chamada, nunca numa migração posterior.
+        self._historico_selecionado = registro
+        try:
+            self.iniciar(e)
+        finally:
+            self._historico_selecionado = None
+
+    def retomar_historico(self, registro, e=None):
+        if not self._historico_disponivel():
+            return
+        atual = self._registro_historico_atual(registro)
+        if atual is None:
+            return
+        origem = (atual.get('origem_input') or atual.get('origem_id') or '').strip()
+        self.page.pop_dialog()
+        if origem:
+            self._iniciar_historico(atual, origem, e)
+            return
+
+        reverso = atual['direcao'] == 'yt_sp'
+        campo = ft.TextField(
+            label=tr('Link ou ID da playlist do YouTube Music') if reverso
+            else tr('Link ou ID da playlist do Spotify'),
+            hint_text='https://music.youtube.com/playlist?list=...' if reverso
+            else 'https://open.spotify.com/playlist/...')
+
+        def continuar(evento):
+            if not self._historico_disponivel():
+                return
+            origem_informada = (campo.value or '').strip()
+            if not origem_informada:
+                campo.error_text = tr('Cole o link da playlist de origem.')
+                self.page.update()
+                return
+            confirmado = self._registro_historico_atual(atual)
+            if confirmado is None:
+                return
+            self.page.pop_dialog()
+            self._iniciar_historico(confirmado, origem_informada, evento)
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True, title=ft.Text(tr('Informe a playlist de origem')),
+            content=ft.Column([
+                ft.Text(tr('Este progresso antigo não guardou o link da origem. '
+                           'Cole o mesmo link usado na primeira migração.'), size=12), campo,
+            ], tight=True, spacing=10),
+            actions=[ft.TextButton(content=tr('Cancelar'), on_click=lambda evento: self.page.pop_dialog()),
+                     ft.Button(content=tr('Retomar / atualizar'), on_click=continuar)]))
+
     def abrir_historico(self, e):
         coluna = ft.Column([], tight=True, spacing=6, scroll=ft.ScrollMode.AUTO)
 
-        def nome_amigavel(caminho):
-            bruto = os.path.basename(caminho)[len('progresso_'):-len('.json')]
-            reverso = bruto.startswith('yt-sp_')
-            if reverso:
-                bruto = bruto[len('yt-sp_'):]
-            return bruto.replace('_', ' ') + ('  (YT Music ➔ Spotify)' if reverso else '')
-
         def montar_lista():
             coluna.controls.clear()
-            arquivos = sorted(glob.glob(os.path.join(nuc.DATA_DIR, 'progresso_*.json')))
-            if not arquivos:
-                coluna.controls.append(ft.Text('Nenhum progresso salvo.', size=12, color=TEXTO2))
-            for arq in arquivos:
-                coluna.controls.append(ft.Row([
-                    ft.Text(nome_amigavel(arq), size=13, expand=True),
-                    ft.TextButton(content=tr('Apagar'), on_click=lambda e, a=arq: apagar(a))]))
+            try:
+                registros = nuc.listar_historico_migracoes()
+            except Exception:
+                nuc.registrar_erro_em_arquivo()
+                coluna.controls.append(ft.Text(tr('Não consegui carregar o histórico.'), size=12, color=ERRO))
+                return
+            if not registros:
+                coluna.controls.append(ft.Text(tr('Nenhum progresso salvo.'), size=12, color=TEXTO2))
+            for registro in registros:
+                valido = registro.get('valido', False)
+                sentido = ('YT Music → Spotify' if registro.get('direcao') == 'yt_sp'
+                           else 'Spotify → YT Music')
+                detalhes = (f"{sentido} · {tr('Adicionadas: {count}', count=registro.get('adicionadas', 0))}"
+                            if valido else tr('Arquivo de progresso inválido.'))
+                coluna.controls.append(self.cartao(
+                    ft.Text(registro.get('nome_playlist') or os.path.basename(registro['arquivo']),
+                            size=13, weight=ft.FontWeight.BOLD),
+                    ft.Text(detalhes, size=11, color=TEXTO2 if valido else AVISO),
+                    ft.Row([
+                        ft.TextButton(content=tr('Retomar / atualizar'),
+                                      disabled=not valido or self.controle is not None,
+                                      on_click=lambda evento, r=registro: self.retomar_historico(r, evento)),
+                        ft.TextButton(content=tr('Apagar'), disabled=self.controle is not None,
+                                      on_click=lambda evento, a=registro['arquivo']: apagar(a)),
+                    ], wrap=True)))
 
         def apagar(arq):
+            if not self._historico_disponivel():
+                return
             try:
                 os.remove(arq)
             except OSError:
@@ -548,8 +640,9 @@ class Tela:
         montar_lista()
         self.page.show_dialog(ft.AlertDialog(
             title=ft.Text(tr('Progresso salvo')),
-            content=ft.Column([ft.Text('Para retomar uma migração, inicie de novo com o mesmo link e o '
-                                       'mesmo nome de playlist.', size=12, color=TEXTO2), coluna],
+            content=ft.Column([ft.Text(tr('Escolha uma migração para conferir a origem novamente e '
+                                          'adicionar somente as faixas que faltam.'), size=12,
+                                      color=TEXTO2), coluna],
                               tight=True, spacing=10),
             actions=[ft.TextButton(content=tr('Fechar'), on_click=fechar)]))
 

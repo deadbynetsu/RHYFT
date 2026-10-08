@@ -1,6 +1,6 @@
 [project]
 name = "migrador-playlists"
-version = "1.5.2"
+version = "1.6.0"
 description = "RHYFT: Spotify e YouTube Music nos dois sentidos."
 requires-python = ">=3.12,<3.14"
 dependencies = [

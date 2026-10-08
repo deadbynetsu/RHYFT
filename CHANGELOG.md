@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+
+Windows e Android agora oferecem **Retomar / atualizar** no histórico local. Ao adicionar músicas à playlist de origem, a ação relê seu conteúdo, confere as faixas presentes no destino e envia apenas as que faltam para a mesma playlist. Migrações concluídas continuam disponíveis para novas atualizações.
+
+O progresso passa a identificar a playlist de origem e o sentido da migração, além de vincular a conta de destino quando a plataforma fornece um identificador estável. Checkpoints antigos são preservados; quando falta a identificação da origem, o app solicita o link uma vez para associar a retomada. Músicas removidas da origem permanecem no destino.
+
+Veja as [notas completas da v1.6.0](releases/v1.6.0.md).
+
 ## 1.5.2
 
 Ajuste visual do app Windows para dar muito mais espaço ao registro de migração, especialmente em telas 1366×768 e janelas maximizadas. O cabeçalho, cartões, formulário, progresso e rodapé ficaram mais compactos verticalmente, sem remover recursos.

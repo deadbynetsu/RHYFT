@@ -154,7 +154,8 @@ class HybridYTMusic:
         })
         itens = d.get("items") or []
         nome = ((itens[0].get("snippet") or {}).get("title") if itens else None)
-        return {"accountName": nome or "conta conectada"}
+        self._account_id = itens[0].get("id") if itens else None
+        return {"accountName": nome or "conta conectada", "channelId": self._account_id}
 
     def get_library_playlists(self, limit=25):
         maximo = 50 if limit is None else max(1, min(50, int(limit)))
@@ -289,6 +290,9 @@ class HybridYTMusic:
             "title": snippet_p.get("title") or "Playlist do YouTube",
             "trackCount": total,
             "tracks": tracks,
+            "author": {"id": snippet_p.get("channelId"), "name": snippet_p.get("channelTitle") or ""},
+            "owned": (snippet_p.get("channelId") == self._account_id)
+            if snippet_p.get("channelId") and getattr(self, "_account_id", None) else None,
         }
 
     def get_liked_songs(self, limit=100, **kwargs):

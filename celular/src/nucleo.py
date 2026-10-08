@@ -38,7 +38,7 @@ from ytmusicapi import YTMusic
 # ============================== CAMINHOS & CONFIGURAÇÕES ======================
 APP_NAME = 'RHYFT'
 LEGACY_APP_NAME = 'MigradorPlaylists'
-APP_VERSION = '1.5.2'
+APP_VERSION = '1.6.0'
 TAMANHO_LOTE = 10          # quantas músicas por envio ao YouTube Music (cada lote é conferido depois)
 TOLERANCIA_DURACAO = 15    # segundos de diferença aceitos entre Spotify e YouTube
 PAUSA_BUSCA_SPOTIFY = 0.4  # segundos entre uma busca e outra no Spotify (YouTube ➔ Spotify)
@@ -133,6 +133,275 @@ def gravar_json(caminho, dados):
         os.chmod(caminho, 0o600)
     except OSError:
         pass
+
+
+def _id_origem_spotify(texto):
+    texto = str(texto or '').strip()
+    m = re.search(r'spotify\.com/(?:intl-[a-z]{2}/)?playlist/([A-Za-z0-9]{10,30})(?:[/?#]|$)', texto, re.I)
+    if m:
+        return m.group(1)
+    m = re.fullmatch(r'(?:spotify:playlist:)?([A-Za-z0-9]{10,30})', texto)
+    return m.group(1) if m else None
+
+
+def _direcao_arquivo(caminho):
+    return 'yt_sp' if os.path.basename(caminho).startswith('progresso_yt-sp_') else 'sp_yt'
+
+
+def _ler_estado_migracao(caminho):
+    """Lê um checkpoint explicitamente; um arquivo inválido nunca vira estado vazio."""
+    try:
+        with open(caminho, encoding='utf-8') as arquivo:
+            estado = json.load(arquivo)
+    except (OSError, ValueError) as erro:
+        raise RuntimeError('O histórico selecionado está ausente ou inválido. Nenhuma playlist foi criada.') from erro
+    if not isinstance(estado, dict) or not isinstance(estado.get('playlist_id'), str) or not estado['playlist_id']:
+        raise RuntimeError('O histórico selecionado não possui uma playlist de destino válida.')
+    direcao = estado.get('direcao', _direcao_arquivo(caminho))
+    if direcao not in ('sp_yt', 'yt_sp'):
+        raise RuntimeError('A direção do histórico selecionado é inválida.')
+    for campo in ('adicionadas', 'videos', 'destino_ids', 'puladas'):
+        valores = estado.get(campo, [])
+        if not isinstance(valores, list) or any(not isinstance(valor, str) for valor in valores):
+            raise RuntimeError('O histórico selecionado possui dados de progresso inválidos.')
+    mapa = estado.get('mapeamento', {})
+    if not isinstance(mapa, dict) or any(not isinstance(chave, str) or not isinstance(valor, str) or not valor
+                                         for chave, valor in mapa.items()):
+        raise RuntimeError('O histórico selecionado possui associações de músicas inválidas.')
+    origem = estado.get('origem_id')
+    if origem is not None and (not isinstance(origem, str) or not origem or
+                              (direcao == 'sp_yt' and _id_origem_spotify(origem) != origem) or
+                              (direcao == 'yt_sp' and extrair_id_playlist_yt(origem) != origem)):
+        raise RuntimeError('A origem do histórico selecionado é inválida.')
+    if estado.get('versao_estado', 0) == 2 and (not origem or 'direcao' not in estado):
+        raise RuntimeError('O histórico selecionado está incompleto.')
+    conta = estado.get('conta_destino')
+    if conta is not None and (not isinstance(conta, str) or not conta):
+        raise RuntimeError('A conta do histórico selecionado é inválida.')
+    conta_origem = estado.get('conta_origem')
+    if conta_origem is not None and (not isinstance(conta_origem, str) or not conta_origem):
+        raise RuntimeError('A conta de origem do histórico selecionado é inválida.')
+    return estado, direcao
+
+
+def listar_historico_migracoes():
+    """Históricos modernos podem ser atualizados; os antigos pedem a origem ao usuário."""
+    registros, adotados, destinos_antigos = [], set(), {}
+    for caminho in glob.glob(os.path.join(DATA_DIR, 'progresso_*.json')):
+        bruto = os.path.basename(caminho)[len('progresso_'):-len('.json')]
+        if bruto.startswith('yt-sp_'):
+            bruto = bruto[len('yt-sp_'):]
+        nome = bruto.replace('_', ' ')
+        try:
+            estado, direcao = _ler_estado_migracao(caminho)
+            origem = estado.get('origem_id')
+            legado = not origem
+            if legado:
+                destinos_antigos[os.path.abspath(caminho)] = estado['playlist_id']
+            elif isinstance(estado.get('arquivo_legado'), str):
+                adotados.add((estado['arquivo_legado'], estado['playlist_id']))
+            nome = estado.get('nome_playlist') or nome
+            if not isinstance(nome, str):
+                nome = bruto.replace('_', ' ')
+            origem_input = (f'https://open.spotify.com/playlist/{origem}' if direcao == 'sp_yt'
+                            else 'LM' if origem == 'LM' else f'https://music.youtube.com/playlist?list={origem}') if origem else None
+            if direcao == 'yt_sp' and estado.get('origem_input') == 'LM':
+                origem_input = 'LM'
+            status = 'legacy' if legado else estado.get('status', 'interrupted')
+            if status not in ('running', 'completed', 'interrupted', 'legacy'):
+                status = 'interrupted'
+            registros.append({'arquivo': os.path.abspath(caminho), 'direcao': direcao, 'origem_input': origem_input,
+                              'origem_id': origem, 'nome_playlist': nome, 'status': status,
+                              'adicionadas': len(set(estado.get('adicionadas', []))), 'legado': legado, 'valido': True})
+        except RuntimeError:
+            registros.append({'arquivo': os.path.abspath(caminho), 'direcao': _direcao_arquivo(caminho),
+                              'origem_input': None, 'origem_id': None, 'nome_playlist': nome,
+                              'status': 'legacy', 'adicionadas': 0, 'legado': True, 'valido': False})
+    registros = [item for item in registros if not (item['legado'] and
+                 (os.path.basename(item['arquivo']), destinos_antigos.get(item['arquivo'])) in adotados)]
+    registros.sort(key=lambda item: os.path.getmtime(item['arquivo']) if os.path.exists(item['arquivo']) else 0,
+                   reverse=True)
+    return registros
+
+
+def _conta_spotify(sp):
+    try:
+        conta = sp.current_user().get('id')
+        return conta if isinstance(conta, str) and conta else None
+    except Exception:
+        return None
+
+
+def _conta_menu_youtube(resposta):
+    """Own-channel links in the active account menu only, never account-switch lists.
+
+    ytmusicapi 1.12.3 discards these endpoints in get_account_info(). The
+    MultiPageMenu/CompactLink schema is also documented by YouTube.js; the
+    ACCOUNT_BOX item is optional, so absence never invents an identity.
+    """
+    if not isinstance(resposta, dict) or not isinstance(resposta.get('actions'), list):
+        return None
+    ids = set()
+    for acao in resposta['actions']:
+        if not isinstance(acao, dict):
+            continue
+        popup = (acao.get('openPopupAction') or {}).get('popup') or {}
+        menu = popup.get('multiPageMenuRenderer') or {}
+        if not isinstance(menu, dict) or not isinstance((menu.get('header') or {}).get('activeAccountHeaderRenderer'), dict):
+            continue
+        for secao in menu.get('sections') or []:
+            if not isinstance(secao, dict):
+                continue
+            itens = (secao.get('multiPageMenuSectionRenderer') or {}).get('items') or []
+            for item in itens:
+                if not isinstance(item, dict):
+                    continue
+                link = item.get('compactLinkRenderer') or {}
+                if not isinstance(link, dict) or (link.get('icon') or {}).get('iconType') != 'ACCOUNT_BOX':
+                    continue
+                endpoint = (link.get('navigationEndpoint') or {}).get('browseEndpoint') or {}
+                canal = endpoint.get('browseId')
+                tipo = ((endpoint.get('browseEndpointContextSupportedConfigs') or {})
+                        .get('browseEndpointContextMusicConfig') or {}).get('pageType')
+                if isinstance(canal, str) and re.fullmatch(r'UC[A-Za-z0-9_-]{22}', canal) and tipo in (
+                        None, 'MUSIC_PAGE_TYPE_USER_CHANNEL', 'MUSIC_PAGE_TYPE_ARTIST'):
+                    ids.add(canal)
+    return next(iter(ids)) if len(ids) == 1 else None
+
+
+def _conta_youtube(yt):
+    try:
+        info = yt.get_account_info() or {}
+        conta = info.get('channelId') or info.get('accountId')
+        if isinstance(conta, str) and conta:
+            return conta
+        enviar = getattr(yt, '_send_request', None)
+        verificar = getattr(yt, '_check_auth', None)
+        if callable(enviar) and callable(verificar):
+            verificar()
+            return _conta_menu_youtube(enviar('account/account_menu', {}))
+        return None
+    except Exception:
+        return None
+
+
+def _caminho_estado_migracao(direcao, origem_id, conta, legado_id=None, conta_origem=None):
+    partes = [direcao, origem_id, conta, legado_id]
+    if origem_id == 'LM':
+        partes.append(conta_origem)
+    identidade = json.dumps(partes, ensure_ascii=False)
+    resumo = hashlib.sha256(identidade.encode('utf-8')).hexdigest()[:24]
+    prefixo = 'yt-sp_' if direcao == 'yt_sp' else 'sp-yt_'
+    return os.path.join(DATA_DIR, f'progresso_{prefixo}{resumo}.json')
+
+
+def _preparar_estado_migracao(direcao, origem_id, nome, conta, arquivo_estado=None, conta_origem=None, origem_input=None):
+    """Seleciona pela origem; nomes iguais e outras contas não misturam migrações."""
+    estado = None
+    arquivo_legado = None
+    caminho = None
+    if arquivo_estado is not None:
+        caminho = os.path.realpath(os.path.abspath(os.fspath(arquivo_estado)))
+        raiz = os.path.realpath(DATA_DIR)
+        if os.path.dirname(caminho) != raiz or not re.fullmatch(r'progresso_.+\.json', os.path.basename(caminho)):
+            raise RuntimeError('O histórico selecionado precisa estar na pasta de dados do RHYFT.')
+        estado, direcao_salva = _ler_estado_migracao(caminho)
+        if direcao_salva != direcao:
+            raise RuntimeError('O histórico selecionado pertence à outra direção de migração.')
+        origem_salva = estado.get('origem_id')
+        if origem_salva == 'LM' and estado.get('conta_origem'):
+            if not conta_origem:
+                raise RuntimeError('Não consegui confirmar a conta de origem deste histórico de músicas curtidas. Conecte a conta original.')
+            if estado['conta_origem'] != conta_origem:
+                raise RuntimeError('O histórico de músicas curtidas pertence a outra conta do YouTube. Conecte a conta original.')
+        transicao_lm = origem_salva == 'LM' and origem_input == 'LM'
+        if origem_salva and origem_salva != origem_id and not transicao_lm:
+            raise RuntimeError('O histórico selecionado pertence a outra playlist de origem. Confira o link.')
+        if conta and estado.get('conta_destino') and estado['conta_destino'] != conta:
+            raise RuntimeError('O histórico selecionado pertence a outra conta de destino. Conecte a conta original.')
+        if not origem_salva or (origem_salva == 'LM' and origem_id != 'LM'):
+            # Keep the user's old file intact; only the verified adopted copy
+            # is saved with its newly supplied source identity.
+            arquivo_legado = os.path.basename(caminho)
+            caminho = _caminho_estado_migracao(direcao, origem_id, conta, estado['playlist_id'], conta_origem)
+            if os.path.exists(caminho):
+                adotado, direcao_adotada = _ler_estado_migracao(caminho)
+                if direcao_adotada != direcao or adotado.get('origem_id') != origem_id or adotado['playlist_id'] != estado['playlist_id']:
+                    raise RuntimeError('Já existe outro histórico nesse destino de armazenamento.')
+                estado = adotado
+    else:
+        candidatos = []
+        for registro in listar_historico_migracoes():
+            if not registro['valido'] or registro['legado'] or registro['direcao'] != direcao or registro['origem_id'] != origem_id:
+                continue
+            salvo, _ = _ler_estado_migracao(registro['arquivo'])
+            if conta and salvo.get('conta_destino') and salvo['conta_destino'] != conta:
+                continue
+            if origem_id == 'LM':
+                if not conta_origem and salvo.get('conta_origem'):
+                    raise RuntimeError('Não consegui confirmar a conta de origem deste histórico de músicas curtidas. Conecte a conta original; o progresso foi preservado.')
+                if not conta_origem or salvo.get('conta_origem') != conta_origem:
+                    continue
+            candidatos.append((salvo, registro['arquivo']))
+        if candidatos:
+            preferido = next((c for c in candidatos if conta and c[0].get('conta_destino') == conta), candidatos[0])
+            estado, caminho = preferido
+        else:
+            sem_identidade = origem_id == 'LM' and not conta_origem
+            caminho = _caminho_estado_migracao(direcao, origem_id, conta,
+                                             legado_id=f'exportacao-{secrets.token_hex(16)}' if sem_identidade else None,
+                                             conta_origem=conta_origem)
+            if os.path.exists(caminho):
+                raise RuntimeError('O histórico dessa origem está inválido. Confira o histórico antes de continuar.')
+    novo = estado is None
+    estado = dict(estado or {'playlist_id': None, 'adicionadas': [], 'videos': [], 'destino_ids': [], 'puladas': []})
+    mapa = dict(estado.get('mapeamento', {}))
+    if not mapa:
+        chaves = estado.get('adicionadas', [])
+        ids = estado.get('videos' if direcao == 'sp_yt' else 'destino_ids', [])
+        if len(chaves) == len(ids):
+            mapa = dict(zip(chaves, ids))
+    estado.update({'versao_estado': 2, 'direcao': direcao, 'origem_id': origem_id,
+                   'origem_input': f'https://open.spotify.com/playlist/{origem_id}' if direcao == 'sp_yt'
+                   else 'LM' if origem_id == 'LM' else f'https://music.youtube.com/playlist?list={origem_id}',
+                   'nome_playlist': estado.get('nome_playlist') or nome, 'conta_destino': estado.get('conta_destino') or conta,
+                   'mapeamento': mapa})
+    if direcao == 'yt_sp' and origem_input == 'LM':
+        estado['origem_input'] = 'LM'
+        estado['origem_nao_verificada'] = origem_id == 'LM' and not conta_origem
+        if conta_origem:
+            estado['conta_origem'] = estado.get('conta_origem') or conta_origem
+    if arquivo_legado:
+        estado['arquivo_legado'] = arquivo_legado
+    for campo in ('adicionadas', 'videos', 'destino_ids', 'puladas'):
+        estado[campo] = list(estado.get(campo, []))
+    return caminho, estado, novo
+
+
+def _reconciliar_estado_migracao(estado, ids_destino):
+    mapa = {chave: destino for chave, destino in estado['mapeamento'].items() if destino in ids_destino}
+    estado['mapeamento'] = mapa
+    estado['adicionadas'] = list(mapa)
+    estado['videos' if estado['direcao'] == 'sp_yt' else 'destino_ids'] = list(dict.fromkeys(mapa.values()))
+    # In older reverse checkpoints puladas meant "already in destination",
+    # not a permanent user decision. Reevaluate those against the real list.
+    estado['puladas'] = []
+
+
+def _registrar_faixa_migracao(estado, chave, destino):
+    estado['mapeamento'][chave] = destino
+    if chave not in estado['adicionadas']:
+        estado['adicionadas'].append(chave)
+    campo = 'videos' if estado['direcao'] == 'sp_yt' else 'destino_ids'
+    if destino not in estado[campo]:
+        estado[campo].append(destino)
+
+
+def _salvar_estado_migracao(caminho, estado, status=None):
+    if status:
+        estado['status'] = status
+    estado['atualizado_em'] = time.time()
+    gravar_json(caminho, estado)
 
 
 def abrir_url_externa(url):
@@ -572,7 +841,7 @@ def explicar_erro_spotify(e):
                 'de uma conta Premium.\n(detalhe técnico: ' + texto + ')')
     if status == 429:
         return ('O Spotify pediu para ir mais devagar (limite de requisições). '
-                'Espere alguns minutos e retome pelo mesmo nome de playlist.')
+                'Espere alguns minutos e retome pelo mesmo link de origem ou pelo histórico.')
     if isinstance(e, requests.exceptions.ConnectionError) or 'timed out' in texto.lower():
         return 'Sem conexão com a internet (ou o servidor não respondeu). Verifique a rede e tente de novo.'
     return texto
@@ -824,7 +1093,7 @@ class MotorMigracao:
         pontuados.sort(key=lambda par: par[0], reverse=True)
         return [c for _, c in pontuados[:maximo]]
 
-    def processo_migracao(self, spotify_input, nome_playlist_destino, controle=None):
+    def processo_migracao(self, spotify_input, nome_playlist_destino, controle=None, arquivo_estado=None):
         controle = controle or ControleMigracao()
         ARQUIVO_ESTADO = None
         estado = None
@@ -832,30 +1101,17 @@ class MotorMigracao:
         pendentes = []
         fila_lote = []        # músicas já escolhidas, ainda não enviadas
         enviar_ref = {}
+        checkpoint_preparado = False
         try:
             if not nome_playlist_destino:
                 nome_playlist_destino = 'Minha Playlist Importada'
 
-            if 'spotify.com/playlist/' in spotify_input:
-                match = re.search(r'playlist/([a-zA-Z0-9]+)', spotify_input)
-                SPOTIFY_PLAYLIST_ID = match.group(1) if match else spotify_input.split('/')[-1].split('?')[0]
-            else:
-                SPOTIFY_PLAYLIST_ID = spotify_input
-
-            nome_arquivo_seguro = re.sub(r'[\\/*?:"<>|]', '', nome_playlist_destino).strip().replace(' ', '_') or 'playlist'
-            ARQUIVO_ESTADO = os.path.join(DATA_DIR, f'progresso_{nome_arquivo_seguro}.json')
-
-            def carregar_estado():
-                estado = ler_json(ARQUIVO_ESTADO, None)
-                if isinstance(estado, dict):
-                    estado.setdefault('playlist_id', None)
-                    estado.setdefault('adicionadas', [])
-                    estado.setdefault('videos', [])
-                    return estado
-                return {'playlist_id': None, 'adicionadas': [], 'videos': []}
+            SPOTIFY_PLAYLIST_ID = _id_origem_spotify(spotify_input)
+            if not SPOTIFY_PLAYLIST_ID:
+                raise RuntimeError('Não entendi o link da playlist do Spotify. Cole o link completo ou o ID da playlist.')
 
             def salvar_estado(estado):
-                gravar_json(ARQUIVO_ESTADO, estado)
+                _salvar_estado_migracao(ARQUIVO_ESTADO, estado)
 
             self.log('=' * 60)
             self.log('Conectando ao Spotify...', 'info')
@@ -938,9 +1194,12 @@ class MotorMigracao:
 
             controle.checar()
             yt = YTMusic(YT_AUTH_PATH)
-            estado = carregar_estado()
+            conta_destino = _conta_youtube(yt)
+            ARQUIVO_ESTADO, estado, _novo_estado = _preparar_estado_migracao(
+                'sp_yt', SPOTIFY_PLAYLIST_ID, nome_playlist_destino, conta_destino, arquivo_estado)
             yt_playlist_id = estado.get('playlist_id')
             criada_agora = False
+            ids_destino = set()
 
             if not yt_playlist_id:
                 self.log(f"🚀 Criando a playlist '{nome_playlist_destino}' no YouTube Music...", 'info')
@@ -948,14 +1207,39 @@ class MotorMigracao:
                 if not isinstance(yt_playlist_id, str):
                     raise RuntimeError(f'O YouTube Music recusou criar a playlist: {yt_playlist_id}')
                 estado['playlist_id'] = yt_playlist_id
-                salvar_estado(estado)
                 criada_agora = True
             else:
+                try:
+                    destino = yt.get_playlist(yt_playlist_id, limit=None)
+                except Exception as e:
+                    raise RuntimeError(f'Não consegui conferir a playlist salva no YouTube Music: {explicar_erro(e)}') from e
+                if not isinstance(destino, dict) or not isinstance(destino.get('tracks'), list):
+                    raise RuntimeError('Não consegui conferir todas as faixas da playlist salva no YouTube Music.')
+                if destino.get('owned') is False:
+                    raise RuntimeError('A playlist salva não pode ser editada pela conta do YouTube conectada. Conecte a conta original.')
+                autor = destino.get('author') or {}
+                dono = autor.get('id') if isinstance(autor, dict) else None
+                if estado.get('conta_destino') and not conta_destino and not (
+                        destino.get('owned') is True and dono == estado['conta_destino']):
+                    raise RuntimeError('Não consegui confirmar a conta do YouTube deste histórico. Tente novamente; o progresso foi preservado.')
+                if dono and ((conta_destino and dono != conta_destino) or
+                             (estado.get('conta_destino') and dono != estado['conta_destino'])):
+                    raise RuntimeError('A playlist salva pertence a outra conta do YouTube. Conecte a conta original.')
+                if destino.get('owned') is True and isinstance(dono, str) and dono:
+                    estado['conta_destino'] = dono
+                if isinstance(destino.get('title'), str) and destino['title']:
+                    estado['nome_playlist'] = destino['title']
+                ids_destino = {t.get('videoId') for t in destino['tracks'] if isinstance(t, dict) and t.get('videoId')}
                 self.log('♻️ Playlist recuperada do histórico!', 'info')
+            _reconciliar_estado_migracao(estado, ids_destino)
+            _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'running')
+            checkpoint_preparado = True
 
             ja_adicionadas = set(estado.get('adicionadas', []))
             musicas_com_erro = []
-            video_ids_sessao = set(estado.get('videos', []))
+            video_ids_sessao = set(ids_destino)
+            ids_confirmados = set(ids_destino)
+            aliases_lote = {}
             erros_busca_seguidos = 0
 
             baseline = {'n': None, 'ok': True}
@@ -1053,12 +1337,16 @@ class MotorMigracao:
 
                 for it in confirmadas:
                     video_ids_sessao.add(it['video_id'])
-                    estado['videos'].append(it['video_id'])
-                    estado['adicionadas'].append(it['chave'])
+                    ids_confirmados.add(it['video_id'])
+                    _registrar_faixa_migracao(estado, it['chave'], it['video_id'])
+                    for alias in aliases_lote.pop(it['video_id'], []):
+                        _registrar_faixa_migracao(estado, alias['chave'], it['video_id'])
                 if confirmadas:
                     salvar_estado(estado)
                 for it in falhas:
                     video_ids_sessao.discard(it['video_id'])
+                    for alias in aliases_lote.pop(it['video_id'], []):
+                        musicas_com_erro.append((alias['query'], 'Não confirmada na playlist do YouTube Music'))
                     musicas_com_erro.append((it['query'], 'Não confirmada na playlist do YouTube Music'))
                     self.log(f'   ❌ Não consegui confirmar: {it["query"]}', 'erro')
 
@@ -1085,11 +1373,18 @@ class MotorMigracao:
 
                 # 'query in ...' mantém compatível o progresso salvo por versões anteriores
                 if chave in ja_adicionadas or query in ja_adicionadas:
+                    if chave not in estado['mapeamento'] and query in estado['mapeamento']:
+                        destino_id = estado['mapeamento'].pop(query)
+                        _registrar_faixa_migracao(estado, chave, destino_id)
+                        estado['adicionadas'] = list(estado['mapeamento'])
+                        salvar_estado(estado)
                     self.log(f'[{i}/{len(tracks_info)}] ⏩ Já importada: {query}', 'aviso')
                     continue
 
                 self.log(f'\n[{i}/{len(tracks_info)}] 🎵 Procurando: "{query}"')
                 video_id = None
+                ja_destino_id = None
+                alias_pendente_id = None
                 search_results = []
                 vistos_busca = set()
                 em_aprovacao = False
@@ -1119,19 +1414,22 @@ class MotorMigracao:
                             yt_artist_name = ', '.join(yt_artistas)
                             candidate_id = top_result['videoId']
 
-                            if candidate_id in video_ids_sessao:
-                                continue
-
                             if self.validar_resultado(track_name, artist_name, yt_title, yt_artistas,
                                                       item.get('duracao'), top_result.get('duration_seconds'),
                                                       item.get('artistas')):
-                                video_id = candidate_id
-                                self.log(f'   🎯 Match automático -> "{yt_title}" - "{yt_artist_name}"', 'sucesso')
+                                if candidate_id in video_ids_sessao:
+                                    if candidate_id in ids_confirmados:
+                                        ja_destino_id = candidate_id
+                                    else:
+                                        alias_pendente_id = candidate_id
+                                else:
+                                    video_id = candidate_id
+                                    self.log(f'   🎯 Match automático -> "{yt_title}" - "{yt_artist_name}"', 'sucesso')
                                 break
-                        if video_id:
+                        if video_id or ja_destino_id or alias_pendente_id:
                             break
 
-                    if not video_id and search_results:
+                    if not video_id and not ja_destino_id and not alias_pendente_id and search_results:
                         candidatos = self.melhores_candidatos(track_name, artist_name, search_results)
                         pendentes.append({'query': query, 'chave': chave, 'candidatos': candidatos})
                         em_aprovacao = True
@@ -1148,7 +1446,14 @@ class MotorMigracao:
                             "clique em 'Vincular' no cartão do YouTube Music e cole os cabeçalhos de novo. "
                             'O progresso foi salvo e a migração continua de onde parou.')
 
-                if video_id:
+                if alias_pendente_id:
+                    aliases_lote.setdefault(alias_pendente_id, []).append({'chave': chave, 'query': query})
+                    self.log('   ⏩ Essa faixa já está na fila e será confirmada junto com o lote.', 'aviso')
+                elif ja_destino_id:
+                    _registrar_faixa_migracao(estado, chave, ja_destino_id)
+                    salvar_estado(estado)
+                    self.log('   ⏩ Essa faixa já está na playlist do YouTube Music.', 'aviso')
+                elif video_id:
                     video_ids_sessao.add(video_id)  # reserva, para não repetir o mesmo vídeo no lote
                     fila_lote.append({'video_id': video_id, 'chave': chave, 'query': query})
                     self.log(f'   ➕ Na fila do lote ({len(fila_lote)}/{TAMANHO_LOTE})', 'sucesso')
@@ -1201,9 +1506,13 @@ class MotorMigracao:
                         self.log(f'{prefixo} ⚠️ Não consegui adicionar: {p["query"]}', 'erro')
 
             self.log('\n' + '=' * 60)
-            self.ui(self._ui_progresso_fim, 'Migração concluída',
+            concluida = not musicas_com_erro
+            _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'completed' if concluida else 'interrupted')
+            self.ui(self._ui_progresso_fim, 'Migração concluída' if concluida else 'Migração com pendências',
                     f'{len(estado["adicionadas"])} música(s) adicionada(s) à playlist.')
-            self.log('🎉 PROCESSO FINALIZADO 🎉', 'sucesso')
+            self.log('🎉 PROCESSO FINALIZADO 🎉' if concluida else
+                     '⚠️ Processo finalizado com pendências. Use Atualizar no histórico para tentar novamente.',
+                     'sucesso' if concluida else 'aviso')
             self.log(f'📊 Total no Spotify: {total_itens_raw}')
             self.log(f'✅ Adicionadas: {len(estado["adicionadas"])}', 'sucesso')
 
@@ -1231,8 +1540,10 @@ class MotorMigracao:
                     enviar_ref['fn']()
                 except Exception:
                     registrar_erro_em_arquivo()
+            if checkpoint_preparado:
+                _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'interrupted')
             self.ui(self._ui_progresso_status, 'Migração pausada',
-                    'O progresso foi salvo. Inicie de novo com o mesmo nome de playlist para retomar.')
+                    'O progresso foi salvo. Inicie de novo com o mesmo link de origem ou use o histórico.')
             if estado is None:
                 self.log('\n⏸️ Migração pausada antes de começar a adicionar músicas. Nada foi criado.', 'aviso')
             else:
@@ -1240,7 +1551,7 @@ class MotorMigracao:
                          'música(s) já adicionada(s).', 'aviso')
                 if pendentes:
                     self.log(f'   {len(pendentes)} faixa(s) que esperavam aprovação serão reavaliadas ao retomar.', 'cinza')
-                self.log(f"▶ Para retomar, inicie de novo com o MESMO nome de playlist ('{nome_playlist_destino}').", 'info')
+                self.log('▶ Para retomar, use o MESMO link de origem ou Atualizar no histórico.', 'info')
                 self.log('   Você também pode iniciar outra migração agora; esta continua guardada.', 'info')
         except MigracaoCancelada:
             self.ui(self._ui_progresso_reset, 'Migração cancelada', 'O progresso foi apagado.')
@@ -1259,12 +1570,17 @@ class MotorMigracao:
                          'se não quiser mais, remova-a por lá.', 'aviso')
         except Exception as e:
             registrar_erro_em_arquivo()
+            if checkpoint_preparado:
+                try:
+                    _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'interrupted')
+                except OSError:
+                    registrar_erro_em_arquivo()
             self.ui(self._ui_progresso_status, 'Migração interrompida', 'Veja os detalhes no registro abaixo.')
             self.log(f'\n❌ Ocorreu um erro: {explicar_erro(e)}', 'erro')
         finally:
             self.ui(self._ui_migracao_terminada, controle)
 
-    def processo_migracao_reversa(self, yt_input, nome_playlist_destino, controle=None):
+    def processo_migracao_reversa(self, yt_input, nome_playlist_destino, controle=None, arquivo_estado=None):
         """YouTube Music -> Spotify. A playlist nova no Spotify é criada como privada."""
         controle = controle or ControleMigracao()
         ARQUIVO_ESTADO = None
@@ -1273,6 +1589,7 @@ class MotorMigracao:
         pendentes = []
         fila_lote = []        # faixas já escolhidas, ainda não enviadas
         enviar_ref = {}
+        checkpoint_preparado = False
         try:
             id_yt = extrair_id_playlist_yt(yt_input)
             if not id_yt:
@@ -1282,6 +1599,8 @@ class MotorMigracao:
             self.log('=' * 60)
             self.log('Conectando ao YouTube Music...', 'info')
             yt = YTMusic(YT_AUTH_PATH)
+            entrada_lm = id_yt == 'LM'
+            conta_origem = None
 
             self.log('🔍 Lendo as músicas da playlist do YouTube Music...', 'info')
             try:
@@ -1292,6 +1611,26 @@ class MotorMigracao:
             except Exception as e:
                 registrar_erro_em_arquivo()
                 raise RuntimeError(f'Não consegui ler a playlist do YouTube Music: {explicar_erro(e)}')
+
+            if entrada_lm:
+                # Android supplies the real account-specific likes playlist ID.
+                # Desktop may keep literal LM. Bind it to a verified channel
+                # when available; otherwise only explicit history selection
+                # can reuse an unbound export, never names or cookies.
+                id_real = pl.get('id')
+                if isinstance(id_real, str) and id_real != 'LM' and re.fullmatch(r'[A-Za-z0-9_-]{10,200}', id_real):
+                    id_yt = id_real
+                else:
+                    conta_origem = _conta_youtube(yt)
+                    if not conta_origem and pl.get('owned') is True:
+                        autor = pl.get('author') or {}
+                        dono = autor.get('id') if isinstance(autor, dict) else None
+                        if isinstance(dono, str) and dono:
+                            conta_origem = dono
+                    if not conta_origem:
+                        self.log('ℹ️ A conta das músicas curtidas não informa um identificador confiável. '
+                                 'Uma nova exportação cria uma playlist independente; para atualizar a existente, '
+                                 'selecione-a no histórico.', 'aviso')
 
             titulo_origem = pl.get('title') or 'Playlist do YouTube Music'
             nome_playlist_destino = (nome_playlist_destino or titulo_origem)[:100]
@@ -1326,21 +1665,8 @@ class MotorMigracao:
                 self.ui(self._ui_progresso_reset)
                 return
 
-            nome_arquivo_seguro = re.sub(r'[\\/*?:"<>|]', '', nome_playlist_destino).strip().replace(' ', '_') or 'playlist'
-            ARQUIVO_ESTADO = os.path.join(DATA_DIR, f'progresso_yt-sp_{nome_arquivo_seguro}.json')
-
-            def carregar_estado():
-                e = ler_json(ARQUIVO_ESTADO, None)
-                if isinstance(e, dict):
-                    e.setdefault('playlist_id', None)
-                    e.setdefault('adicionadas', [])
-                    e.setdefault('destino_ids', [])
-                    e.setdefault('puladas', [])
-                    return e
-                return {'playlist_id': None, 'adicionadas': [], 'destino_ids': [], 'puladas': []}
-
             def salvar_estado(e):
-                gravar_json(ARQUIVO_ESTADO, e)
+                _salvar_estado_migracao(ARQUIVO_ESTADO, e)
 
             controle.checar()
             self.log('Conectando ao Spotify...', 'info')
@@ -1351,7 +1677,10 @@ class MotorMigracao:
                 raise RuntimeError(MSG_REAUTORIZAR.replace('\n\n', ' '))
             sp = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=5)
 
-            estado = carregar_estado()
+            conta_destino = _conta_spotify(sp)
+            ARQUIVO_ESTADO, estado, _novo_estado = _preparar_estado_migracao(
+                'yt_sp', id_yt, nome_playlist_destino, conta_destino, arquivo_estado,
+                conta_origem=conta_origem, origem_input='LM' if entrada_lm else None)
             sp_playlist_id = estado.get('playlist_id')
             criada_agora = False
 
@@ -1367,9 +1696,19 @@ class MotorMigracao:
                 if not sp_playlist_id:
                     raise RuntimeError(f'O Spotify recusou criar a playlist: {criada}')
                 estado['playlist_id'] = sp_playlist_id
-                salvar_estado(estado)
                 criada_agora = True
             else:
+                if estado.get('conta_destino') and not conta_destino:
+                    raise RuntimeError('Não consegui confirmar a conta do Spotify deste histórico. Tente novamente; o progresso foi preservado.')
+                try:
+                    destino = sp._get(f'playlists/{sp_playlist_id}')
+                except Exception as e:
+                    raise RuntimeError(f'Não consegui conferir a playlist salva no Spotify: {explicar_erro_spotify(e)}') from e
+                dono = (destino.get('owner') or {}).get('id')
+                if dono and conta_destino and dono != conta_destino and not destino.get('collaborative'):
+                    raise RuntimeError('A playlist salva pertence a outra conta do Spotify. Conecte a conta original.')
+                if isinstance(destino.get('name'), str) and destino['name']:
+                    estado['nome_playlist'] = destino['name']
                 self.log('♻️ Playlist recuperada do histórico!', 'info')
 
             # ---------- conferência do que realmente está na playlist do Spotify ----------
@@ -1432,13 +1771,18 @@ class MotorMigracao:
             def erro_legivel(e):
                 return explicar_erro_spotify(e) if isinstance(e, SpotifyException) else explicar_erro(e)
 
-            ids_sessao = set(estado.get('destino_ids', []))
+            ids_sessao = set()
             if not criada_agora:
                 # retomada: o que já está na playlist não pode ser adicionado de novo (o Spotify aceita duplicadas)
                 try:
                     ids_sessao |= ids_na_playlist()
                 except SpotifyException as e:
                     raise RuntimeError(explicar_erro_spotify(e))
+            _reconciliar_estado_migracao(estado, ids_sessao)
+            _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'running')
+            checkpoint_preparado = True
+            ids_confirmados = set(ids_sessao)
+            aliases_lote = {}
             musicas_com_erro, repetidas = [], []
 
             def enviar_lote():
@@ -1483,12 +1827,16 @@ class MotorMigracao:
 
                 for it in confirmadas:
                     ids_sessao.add(it['sp_id'])
-                    estado['destino_ids'].append(it['sp_id'])
-                    estado['adicionadas'].append(it['chave'])
+                    ids_confirmados.add(it['sp_id'])
+                    _registrar_faixa_migracao(estado, it['chave'], it['sp_id'])
+                    for alias in aliases_lote.pop(it['sp_id'], []):
+                        _registrar_faixa_migracao(estado, alias['chave'], it['sp_id'])
                 if confirmadas:
                     salvar_estado(estado)
                 for it in falhas:
                     ids_sessao.discard(it['sp_id'])
+                    for alias in aliases_lote.pop(it['sp_id'], []):
+                        musicas_com_erro.append((alias['query'], 'Não confirmada na playlist do Spotify'))
                     musicas_com_erro.append((it['query'], 'Não confirmada na playlist do Spotify'))
                     self.log(f'   ❌ Não consegui confirmar: {it["query"]}', 'erro')
                 self.log(f'   ✅ Lote conferido: {len(confirmadas)} de {len(itens)} confirmada(s) na playlist.',
@@ -1522,6 +1870,8 @@ class MotorMigracao:
                 self.log(f'\n[{i}/{len(faixas)}] 🎵 Procurando: "{query}"')
                 sp_id = None
                 duplicada = False
+                duplicada_id = None
+                alias_pendente_id = None
                 encontrados = []
                 vistos_busca = set()
                 em_aprovacao = False
@@ -1554,16 +1904,20 @@ class MotorMigracao:
                                                       item.get('duracao'), dur_sp_cand, item['artistas'],
                                                       origem_yt=True):
                                 if r['id'] in ids_sessao:
-                                    duplicada = True
+                                    if r['id'] in ids_confirmados:
+                                        duplicada = True
+                                        duplicada_id = r['id']
+                                    else:
+                                        alias_pendente_id = r['id']
                                 else:
                                     sp_id = r['id']
                                     self.log(f'   🎯 Match automático -> "{r.get("name", "")}" - "{", ".join(nomes_sp)}"',
                                              'sucesso')
                                 break
-                        if sp_id or duplicada:
+                        if sp_id or duplicada or alias_pendente_id:
                             break
 
-                    if not sp_id and not duplicada and encontrados:
+                    if not sp_id and not duplicada and not alias_pendente_id and encontrados:
                         candidatos = self.melhores_candidatos_spotify(titulo_busca, artista_busca, encontrados)
                         pendentes.append({'query': query, 'chave': chave, 'candidatos': candidatos})
                         em_aprovacao = True
@@ -1586,7 +1940,10 @@ class MotorMigracao:
                             '(pode ser limite de requisições ou a sessão expirada). '
                             'O progresso foi salvo e a migração continua de onde parou.')
 
-                if sp_id:
+                if alias_pendente_id:
+                    aliases_lote.setdefault(alias_pendente_id, []).append({'chave': chave, 'query': query})
+                    self.log('   ⏩ Essa faixa já está na fila e será confirmada junto com o lote.', 'aviso')
+                elif sp_id:
                     ids_sessao.add(sp_id)  # reserva, para não repetir a mesma faixa no lote
                     fila_lote.append({'sp_id': sp_id, 'chave': chave, 'query': query})
                     self.log(f'   ➕ Na fila do lote ({len(fila_lote)}/{TAMANHO_LOTE})', 'sucesso')
@@ -1595,7 +1952,7 @@ class MotorMigracao:
                 elif duplicada:
                     self.log('   ⏩ Essa faixa já está na playlist do Spotify (repetida no YouTube Music).', 'aviso')
                     repetidas.append(query)
-                    estado['puladas'].append(chave)
+                    _registrar_faixa_migracao(estado, chave, duplicada_id)
                     salvar_estado(estado)
                 elif not em_aprovacao:
                     if not any(query == q for q, motivo in musicas_com_erro):
@@ -1643,9 +2000,13 @@ class MotorMigracao:
                         self.log(f'{prefixo} ⚠️ Não consegui adicionar: {p["query"]}', 'erro')
 
             self.log('\n' + '=' * 60)
-            self.ui(self._ui_progresso_fim, 'Migração concluída',
+            concluida = not musicas_com_erro
+            _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'completed' if concluida else 'interrupted')
+            self.ui(self._ui_progresso_fim, 'Migração concluída' if concluida else 'Migração com pendências',
                     f'{len(estado["adicionadas"])} música(s) adicionada(s) à playlist.')
-            self.log('🎉 PROCESSO FINALIZADO 🎉', 'sucesso')
+            self.log('🎉 PROCESSO FINALIZADO 🎉' if concluida else
+                     '⚠️ Processo finalizado com pendências. Use Atualizar no histórico para tentar novamente.',
+                     'sucesso' if concluida else 'aviso')
             self.log(f'📊 Total no YouTube Music: {total_itens}')
             self.log(f'✅ Adicionadas: {len(estado["adicionadas"])}', 'sucesso')
             if repetidas:
@@ -1673,8 +2034,10 @@ class MotorMigracao:
                     enviar_ref['fn']()
                 except Exception:
                     registrar_erro_em_arquivo()
+            if checkpoint_preparado:
+                _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'interrupted')
             self.ui(self._ui_progresso_status, 'Migração pausada',
-                    'O progresso foi salvo. Inicie de novo com o mesmo nome de playlist para retomar.')
+                    'O progresso foi salvo. Inicie de novo com o mesmo link de origem ou use o histórico.')
             if estado is None or not sp_playlist_id:
                 self.log('\n⏸️ Migração pausada antes de começar a adicionar músicas. Nada foi criado.', 'aviso')
             else:
@@ -1682,7 +2045,7 @@ class MotorMigracao:
                          'música(s) já adicionada(s).', 'aviso')
                 if pendentes:
                     self.log(f'   {len(pendentes)} faixa(s) que esperavam aprovação serão reavaliadas ao retomar.', 'cinza')
-                self.log(f"▶ Para retomar, inicie de novo com o MESMO link e o MESMO nome de playlist ('{nome_playlist_destino}').", 'info')
+                self.log('▶ Para retomar, use o MESMO link de origem ou Atualizar no histórico.', 'info')
         except MigracaoCancelada:
             self.ui(self._ui_progresso_reset, 'Migração cancelada', 'O progresso foi apagado.')
             if ARQUIVO_ESTADO and os.path.exists(ARQUIVO_ESTADO):
@@ -1697,6 +2060,11 @@ class MotorMigracao:
                          'se não quiser mais, remova-a por lá.', 'aviso')
         except Exception as e:
             registrar_erro_em_arquivo()
+            if checkpoint_preparado:
+                try:
+                    _salvar_estado_migracao(ARQUIVO_ESTADO, estado, 'interrupted')
+                except OSError:
+                    registrar_erro_em_arquivo()
             self.ui(self._ui_progresso_status, 'Migração interrompida', 'Veja os detalhes no registro abaixo.')
             if isinstance(e, RuntimeError):      # já vem com a mensagem pronta
                 msg_erro = str(e)

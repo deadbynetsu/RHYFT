@@ -1083,10 +1083,10 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         btn_celular.configure(command=copiar_para_celular)
 
     def abrir_janela_historico(self):
-        janela = self._nova_janela('Gerenciar histórico de progresso', '560x480')
+        janela = self._nova_janela(tr('Histórico'), '740x520')
 
-        self._titulo_janela(janela, 'Histórico de progresso',
-                            'Migrações pausadas ficam guardadas aqui. Apague as que não quer mais retomar.')
+        self._titulo_janela(janela, tr('Histórico'),
+                            tr('Retome uma migração ou atualize a playlist com as músicas novas da origem.'))
         frame_lista = ctk.CTkScrollableFrame(janela, fg_color=COR_CARTAO, corner_radius=14,
                                              border_width=1, border_color=COR_BORDA)
         frame_lista.pack(padx=24, pady=(0, 20), fill='both', expand=True)
@@ -1094,41 +1094,109 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         def atualizar_lista():
             for widget in frame_lista.winfo_children():
                 widget.destroy()
-            arquivos = glob.glob(os.path.join(DATA_DIR, 'progresso_*.json'))
-            if not arquivos:
+            registros = listar_historico_migracoes()
+            if not registros:
                 ctk.CTkLabel(frame_lista, text=tr('Nenhum histórico guardado.'),
                              font=fonte(12), text_color=COR_TEXTO_2).pack(padx=10, pady=40)
                 return
-            for arquivo in arquivos:
-                bruto = os.path.basename(arquivo)[len('progresso_'):-len('.json')]
-                reverso_arq = bruto.startswith('yt-sp_')
-                if reverso_arq:
-                    bruto = bruto[len('yt-sp_'):]
-                nome_playlist = bruto.replace('_', ' ') + ('  (YouTube Music ➔ Spotify)' if reverso_arq else '')
+            for registro in registros:
+                arquivo = registro['arquivo']
+                nome_playlist = registro['nome_playlist']
+                reverso_arq = registro['direcao'] == 'yt_sp'
                 row = ctk.CTkFrame(frame_lista, fg_color=COR_CARTAO_2, corner_radius=10)
                 row.pack(fill='x', pady=4, padx=2)
                 ctk.CTkLabel(row, text='', image=icone('music', COR_TEAL, 18), width=26).pack(
                     side='left', padx=(12, 6), pady=10)
-                ctk.CTkLabel(row, text=nome_playlist, font=fonte(13, 'bold'), text_color=COR_TEXTO,
-                             anchor='w').pack(side='left', padx=4, fill='x', expand=True)
+                detalhes = ctk.CTkFrame(row, fg_color='transparent')
+                detalhes.pack(side='left', padx=4, pady=8, fill='x', expand=True)
+                ctk.CTkLabel(detalhes, text=nome_playlist, font=fonte(13, 'bold'), text_color=COR_TEXTO,
+                             anchor='w', justify='left', wraplength=250).pack(fill='x')
+                sentido = 'YouTube Music ➔ Spotify' if reverso_arq else 'Spotify ➔ YouTube Music'
+                resumo = tr('{count} música(s) adicionada(s)', count=registro['adicionadas'])
+                if not registro['valido']:
+                    resumo = tr('Histórico inválido')
+                ctk.CTkLabel(detalhes, text=f'{sentido} · {resumo}', font=fonte(11),
+                             text_color=COR_TEXTO_2, anchor='w').pack(fill='x')
 
                 def apagar(arq=arquivo, nome=nome_playlist):
-                    if messagebox.askyesno('Confirmar exclusão',
-                                           f"Apagar o histórico de progresso da playlist '{nome}'?", parent=janela):
+                    if self._controle is not None:
+                        return
+                    if messagebox.askyesno(tr('Apagar'),
+                                           tr('Apagar o histórico de progresso da playlist "{name}"?', name=nome), parent=janela):
+                        if self._controle is not None:
+                            return
                         try:
                             if os.path.exists(arq):
                                 os.remove(arq)
                             atualizar_lista()
                             self.log(f'🗑️ Histórico apagado: {nome}', 'aviso')
                         except Exception as e:
-                            messagebox.showerror('Erro', f'Não foi possível apagar o arquivo: {e}', parent=janela)
+                            messagebox.showerror(tr('Aviso'), str(e), parent=janela)
 
-                botao(row, tr('Apagar'), 'trash', 'perigo', apagar, altura=30, largura=100).pack(
-                    side='right', padx=10)
+                btn_apagar = botao(row, tr('Apagar'), 'trash', 'perigo', apagar, altura=30, largura=86)
+                btn_apagar.pack(side='right', padx=(6, 10))
+                definir_ativo(btn_apagar, self._controle is None)
+                btn_retomar = botao(row, tr('Retomar / atualizar'), 'play', 'secundario',
+                                   lambda item=registro: self._retomar_historico(item, janela),
+                                   altura=30, largura=176)
+                btn_retomar.pack(side='right', padx=6)
+                definir_ativo(btn_retomar, self._controle is None and registro['valido'])
 
         atualizar_lista()
 
-    def iniciar_thread(self):
+    def _ler_registro_historico(self, registro, parent=None):
+        arquivo = registro.get('arquivo') if isinstance(registro, dict) else None
+        if not isinstance(arquivo, str) or not arquivo:
+            atual = None
+        else:
+            atual = next((item for item in listar_historico_migracoes()
+                          if os.path.normcase(os.path.abspath(item['arquivo'])) ==
+                          os.path.normcase(os.path.abspath(arquivo))), None)
+        if not atual or not atual.get('valido') or atual.get('direcao') not in ('sp_yt', 'yt_sp'):
+            messagebox.showwarning(tr('Aviso'),
+                                   tr('Este histórico foi removido ou está inválido. Nenhuma nova playlist foi criada.'),
+                                   parent=parent or self)
+            return None
+        return atual
+
+    def _retomar_historico(self, registro, janela):
+        if self._controle is not None:
+            return
+        atual = self._ler_registro_historico(registro, janela)
+        if atual is None:
+            return
+        origem = atual.get('origem_input')
+        if not origem:
+            if not atual.get('legado'):
+                messagebox.showwarning(tr('Aviso'),
+                                       tr('Este histórico não informa a playlist de origem.'), parent=janela)
+                return
+            origem = ctk.CTkInputDialog(
+                title=tr('Retomar / atualizar'),
+                text=tr('Este histórico antigo não guarda a origem. Cole o link da playlist original para continuar.')).get_input()
+            if not origem or not origem.strip():
+                return
+        if self._controle is not None:
+            return
+        rotulo = next(rotulo for rotulo, modo in self._rotulos_modo.items() if modo == atual['direcao'])
+        self.seg_modo.set(rotulo)
+        self._ao_trocar_modo(rotulo)
+        self.entry_spotify.insert(0, origem.strip())
+        self.entry_yt.insert(0, atual['nome_playlist'])
+        janela.destroy()
+        self.iniciar_thread(history_record=atual)
+
+    def iniciar_thread(self, history_record=None):
+        if self._controle is not None:
+            return
+        arquivo_estado = None
+        if history_record is not None:
+            registro = self._ler_registro_historico(history_record)
+            if registro is None:
+                return
+            if registro['direcao'] != self.modo:
+                return
+            arquivo_estado = registro['arquivo']
         origem = self.entry_spotify.get().strip()
         nome_destino = self.entry_yt.get().strip()
         reverso = self.modo == 'yt_sp'
@@ -1165,7 +1233,10 @@ class MigradorApp(MotorMigracao, ctk.CTk):
         else:
             self._ui_progresso_reset('Conectando ao Spotify...', 'Lendo as músicas da playlist.')
             alvo = self.processo_migracao
-        threading.Thread(target=alvo, args=(origem, nome_destino, controle), daemon=True).start()
+        argumentos = (origem, nome_destino, controle)
+        if arquivo_estado is not None:
+            argumentos += (arquivo_estado,)
+        threading.Thread(target=alvo, args=argumentos, daemon=True).start()
 
     def pausar_migracao(self):
         controle = self._controle

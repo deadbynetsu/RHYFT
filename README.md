@@ -24,7 +24,7 @@ Migre playlists entre **Spotify** e **YouTube Music** nos dois sentidos — pela
 
 ## O que é o RHYFT?
 
-O **RHYFT** foi criado para tirar o atrito de mudar de plataforma de música. Ele lê uma playlist de origem, procura as faixas no serviço de destino e cria uma nova playlist para você.
+O **RHYFT** foi criado para tirar o atrito de mudar de plataforma de música. Ele lê uma playlist de origem, procura as faixas no serviço de destino e cria uma playlist para você. Quando a origem ganha músicas novas, você pode atualizar o mesmo destino pelo histórico.
 
 Funciona nos dois sentidos:
 
@@ -40,10 +40,10 @@ Quando uma correspondência não é confiável, o RHYFT não escolhe no escuro: 
 | Plataforma | Experiência | Acesso |
 |---|---|---|
 | 🌐 **Web** | Sem instalação, histórico salvo no navegador e revisão de faixas incertas | [Abrir RHYFT Online](https://rhyft.netlify.app/migrar.html) |
-| 🪟 **Windows** | App nativo em um único `RHYFT.exe`, progresso, pausa/retomada e histórico local | [Baixar RHYFT.exe](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe) |
-| 🤖 **Android** | Interface mobile, autenticação de contas e migração direto pelo celular | [Baixar APK](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk) |
+| 🪟 **Windows** | App nativo em um único `RHYFT.exe`, progresso, pausa e atualização de playlists pelo histórico local | [Baixar RHYFT.exe](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT.exe) |
+| 🤖 **Android** | Interface mobile, autenticação de contas e atualização de playlists pelo histórico local | [Baixar APK](https://github.com/deadbynetsu/RHYFT/releases/latest/download/RHYFT-android.apk) |
 
-Os builds oficiais de Windows e Android são gerados pelo **GitHub Actions**. A publicação conjunta só ocorre após os testes e os dois builds passarem no mesmo commit. Releases já publicadas não são sobrescritas. Veja o [changelog](CHANGELOG.md) e as [notas da v1.5.2](releases/v1.5.2.md).
+Os builds oficiais de Windows e Android são gerados pelo **GitHub Actions**. A publicação conjunta só ocorre após os testes e os dois builds passarem no mesmo commit. Releases já publicadas não são sobrescritas. Veja o [changelog](CHANGELOG.md) e as [notas da v1.6.0](releases/v1.6.0.md).
 
 ---
 
@@ -60,10 +60,11 @@ O onboarding e os controles principais estão disponíveis em **Português (Bras
 - Revisão manual para resultados incertos
 - Progresso em tempo real
 - Pausa, cancelamento e retomada nas versões nativas
-- Histórico de migrações na Web
+- Histórico local de migrações na Web, Windows e Android
+- **Retomar / atualizar**: enviar músicas novas para a mesma playlist de destino
 - OAuth nas integrações Web/mobile onde aplicável
 - Downloads oficiais com **SHA-256**
-- Atualizações automáticas dos artefatos na Release
+- Publicação conjunta dos downloads Windows e Android
 - Código aberto sob licença MIT
 
 ---
@@ -77,7 +78,7 @@ flowchart LR
     C --> D{Confiança suficiente?}
     D -- Sim --> E[Adicionar automaticamente]
     D -- Não --> F[Revisão manual]
-    E --> G[Nova playlist]
+    E --> G[Playlist de destino]
     F --> G
 ```
 
@@ -87,6 +88,14 @@ flowchart LR
 4. Defina o nome da playlist de destino.
 5. Inicie a migração.
 6. Revise somente as faixas que realmente precisarem da sua escolha.
+
+### Atualizar uma playlist já migrada
+
+Depois de adicionar músicas à origem, conecte as contas usadas na migração e escolha **Retomar / atualizar** no histórico. O RHYFT relê a origem, confere o destino e envia somente as faixas que faltam. O registro permanece no histórico depois da conclusão, permitindo atualizar a mesma playlist novamente.
+
+No Windows e Android, um progresso salvo por versões antigas pode precisar do link da origem uma vez para associar a retomada à playlist correta. Os registros ficam no dispositivo; na Web, ficam no navegador.
+
+A atualização acontece quando você inicia essa ação. Músicas removidas da origem continuam na playlist de destino.
 
 ---
 
