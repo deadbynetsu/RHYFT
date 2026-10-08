@@ -25,9 +25,9 @@ O endereço HTTPS `onrender.com` do serviço é detectado automaticamente pela v
 
 Depois de conectado ao Render, o serviço recebe deploys automáticos de alterações Web em `main`. O filtro `buildFilter.paths` inclui `site/**`, `netlify/functions/**`, `web-server.cjs`, `Dockerfile.web`, `Dockerfile.web.dockerignore` e `render.yaml`. Alterações apenas nos aplicativos nativos não acionam esse serviço Web.
 
-### O site antigo no Netlify
+### Publicação pontual no Netlify
 
-A configuração do repositório suspende novos builds no Netlify. O endereço antigo pode continuar servindo a versão já publicada; acessos ao site e chamadas às funções antigas ainda podem consumir créditos da plataforma. Suspender builds não garante consumo zero. Use a URL final do novo host depois de publicar e configurar o OAuth.
+A configuração permite um build Netlify somente para o commit com a mensagem exata `Deploy web fixes to Netlify`. Os outros commits continuam ignorados, inclusive atualizações futuras destinadas ao Render. Isso permite a tentativa pontual autorizada sem reativar todos os builds automáticos. Uma repetição manual desse deploy ainda pode gerar outra cobrança. Acessos ao site e chamadas às funções publicadas também podem consumir créditos da plataforma.
 
 ## Endereços OAuth por instalação
 

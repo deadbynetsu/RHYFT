@@ -1,9 +1,9 @@
 [build]
   publish = "site"
   functions = "netlify/functions"
-  # O site Web passa a ser publicado pelo Render, no mesmo repositório.
-  # Netlify: saída 0 ignora o build. Remova esta linha para reativá-lo.
-  ignore = "exit 0"
+  # Publicação pontual autorizada; os demais commits continuam sem build.
+  # Netlify: saída 0 ignora o build; 1 permite esta publicação.
+  ignore = "test \"$(git log -1 --format=%s \"$COMMIT_REF\")\" != \"Deploy web fixes to Netlify\""
 
 [functions]
   node_bundler = "esbuild"
