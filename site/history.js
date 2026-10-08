@@ -95,7 +95,13 @@
     if ($('#start-migration')?.disabled) return;
     const target = $(`.direction[data-direction="${item.direction}"]`);
     if (target && !target.disabled) target.click();
-    if (ui.sourceInput) ui.sourceInput.value = item.sourceInput || '';
+    if (ui.sourceInput) {
+      const store = window.RhyftMigrationStore;
+      const id = store?.sourceId(item);
+      ui.sourceInput.value = id && store.playlistId(item.direction, item.sourceInput) !== id
+        ? item.direction === 'spotify-youtube' ? `https://open.spotify.com/playlist/${id}` : `https://music.youtube.com/playlist?list=${id}`
+        : item.sourceInput || '';
+    }
     if (ui.playlistName) ui.playlistName.value = item.destinationName || '';
     document.dispatchEvent(new CustomEvent('rhyft:resume', { detail: item }));
     closeHistory();

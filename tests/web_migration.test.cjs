@@ -43,7 +43,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
     channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`, url: `https://www.youtube.com/watch?v=Music12345${i}`}));
   const remote = new Set(options.existing ? [candidates[0].id] : []);
   const stats = {creates: 0, createIds: [], createBodies: [], replacementRequired: false, writes: [], writeDestinations: [], writeBodies: [], writeFailure: null, searches: [], searchTimes: [], reads: 0, readIds: [], missingDestinations: new Set(), readFailure: null, readFailureDestination: null,
-    accounts: {spotify: 'SpotifyAccount123', youtube: 'YouTubeAccount123'}, sourceFailure: null, searchRoutes: [], writeTimes: [],
+    accounts: {spotify: 'SpotifyAccount123', youtube: 'YouTubeAccount123'}, sourceFailure: null, sourceData: null, sourceInputs: [], searchRoutes: [], writeTimes: [],
     failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, emptySearch: false, searchGate: null, searchGateQuery: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false, loggedOut: []};
   const historyRecord = {id: 'legacy-history', createdAt: new Date().toISOString(), direction,
     sourceInput: sourceId, destinationName: 'Destino antigo', destinationUrl: destUrl, added: 1, pending: 0, skipped: 1, status: 'completed', ...options.savedRecord};
@@ -64,9 +64,10 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
       return json({authorizationFixture: true});
     }
     if (url.pathname === `/api/${origin}/playlist` && req.method() === 'GET') {
+      stats.sourceInputs.push(url.searchParams.get('input'));
       if (stats.sourceFailure) return json(stats.sourceFailure.data, stats.sourceFailure.status);
       if (stats.forbiddenSource) return json({code: 'SPOTIFY_403', error: 'Esta conta não está autorizada no aplicativo Spotify. Adicione-a em User Management ou use seu próprio Client ID.'}, 403);
-      return json({id: sourceId, tracks});
+      return json(stats.sourceData || {id: sourceId, tracks});
     }
     if (url.pathname === `/api/${target}/playlist` && req.method() === 'POST') {
       stats.creates++;
@@ -125,8 +126,7 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   if (direction === 'youtube-spotify') await page.locator('[data-direction="youtube-spotify"]').click();
   await page.locator('#playlist-input').fill(sourceId);
   await page.locator('#playlist-name').fill('Destino novo');
-  const start = async ({withoutDestination = false} = {}) => {
-    await page.locator('#start-migration').click();
+  const waitForRun = async ({withoutDestination = false} = {}) => {
     let stopped = false;
     const advancing = virtualClock ? (async () => {
       while (!stopped) {
@@ -139,8 +139,12 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
         !(withoutDestination ? document.querySelector('#progress-panel') : document.querySelector('#result-panel')).hidden, withoutDestination, {timeout: 60000});
     } finally {stopped = true; await advancing;}
   };
+  const start = async (options = {}) => {
+    await page.locator('#start-migration').click();
+    await waitForRun(options);
+  };
   const history = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
-  return {page, context, stats, remote, candidates, sourceId, history, start, errors};
+  return {page, context, stats, remote, candidates, sourceId, history, start, waitForRun, errors};
 }
 
 async function advanceUntil(f, predicate, argument) {
@@ -155,13 +159,203 @@ async function advanceUntil(f, predicate, argument) {
   finally {done = true; await advancing;}
 }
 
+for (const resumeVia of ['the same Spotify URL', 'the history update action']) {
+  test(`incremental Spotify export via ${resumeVia} reuses its destination and exports only newly appended tracks`, async () => {
+    const tracks = Array.from({length: 19}, (_, i) => ({id: `SourceTrack${String(i).padStart(9, '0')}`,
+      name: `Faixa inicial ${String(i).padStart(2, '0')}`, artists: ['Artista'], duration: 180}));
+    const candidate = (track, i) => ({id: `Video${String(i).padStart(6, '0')}`, title: track.name, name: track.name,
+      artists: ['Artista'], channel: 'Artista', duration: 180, url: `https://www.youtube.com/watch?v=Video${String(i).padStart(6, '0')}`});
+    const candidates = tracks.map(candidate);
+    const f = await fixture('spotify-youtube', {tracks, candidates});
+    try {
+      const sourceUrl = `https://open.spotify.com/playlist/${f.sourceId}?si=initial-share`;
+      await f.page.locator('#playlist-input').fill(sourceUrl);
+      await f.start();
+      const original = (await f.history())[0];
+      assert.equal(original.status, 'completed');
+      assert.equal(original.added, 19);
+      assert.equal(f.stats.searches.length, 19);
+      assert.equal(f.stats.writes.flat().length, 19);
+      for (const [i, name] of [[19, 'Nova Aurora'], [20, 'Nova Madrugada']]) {
+        const track = {id: `SourceTrack${String(i).padStart(9, '0')}`, name, artists: ['Artista'], duration: 180};
+        tracks.push(track); candidates.push(candidate(track, i));
+      }
+      await f.page.reload();
+      await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+      assert.equal(await f.page.locator('#result-panel').isHidden(), true, 'a fresh page must not display an uninitialized destination card');
+      if (resumeVia.startsWith('the history')) {
+        await f.page.locator('#history-toggle').click();
+        await f.page.getByRole('button', {name: 'Retomar / atualizar'}).click();
+        await f.waitForRun();
+      } else {
+        await f.page.locator('#playlist-input').fill(`https://open.spotify.com/playlist/${f.sourceId}?si=updated-share`);
+        await f.start();
+      }
+      const records = await f.history();
+      assert.equal(records.length, 1);
+      assert.equal(records[0].id, original.id);
+      assert.equal(records[0].destinationId, original.destinationId);
+      assert.equal(records[0].destinationUrl, original.destinationUrl);
+      assert.equal(records[0].status, 'completed');
+      assert.equal(records[0].added, 21);
+      assert.equal(Object.keys(records[0].processed).length, 21);
+      assert.deepEqual(f.stats.searches.slice(19), ['Artista Nova Aurora', 'Artista Nova Madrugada']);
+      assert.deepEqual(f.stats.writes.flat().slice(19), candidates.slice(19).map(item => item.id));
+      assert.equal(new Set(f.stats.writes.flat()).size, 21);
+      assert.ok(f.stats.writeDestinations.every(id => id === original.destinationId));
+      assert.equal(f.stats.creates, 1);
+      assert.equal(await f.page.locator('#progress-count').innerText(), '21 de 21');
+      await f.start();
+      assert.equal(f.stats.creates, 1);
+      assert.equal(f.stats.searches.length, 21, 'an unchanged update must not search old or newly confirmed tracks again');
+      assert.equal(f.stats.writes.flat().length, 21, 'an unchanged update must not repeat any destination write');
+      assert.equal((await f.history()).length, 1);
+      assert.deepEqual(f.errors, []);
+    } finally {await f.context.close();}
+  });
+}
+
+test('a history update with an invalid legacy link reads the saved source ID and preserves its existing destination', async () => {
+  const tracks = Array.from({length: 21}, (_, i) => ({id: `SourceTrack${String(i).padStart(9, '0')}`,
+    name: `Faixa ${String(i).padStart(2, '0')}`, artists: ['Artista'], duration: 180}));
+  const candidates = tracks.map((track, i) => ({id: `Video${String(i).padStart(6, '0')}`, title: track.name,
+    name: track.name, artists: ['Artista'], channel: 'Artista', duration: 180}));
+  const savedRecord = {sourceId: 'Source123456789012345', sourceInput: 'https://open.spotify.com/playlist/not-a-playlist',
+    destinationId: 'Destination123456789', added: 20, skipped: 0,
+    processed: Object.fromEntries(tracks.slice(0, 20).map((track, i) => [track.id, candidates[i].id])),
+    pending: 0, pendingItems: [], inFlight: []};
+  const f = await fixture('spotify-youtube', {tracks, candidates, savedRecord});
+  try {
+    candidates.slice(0, 20).forEach(candidate => f.remote.add(candidate.id));
+    await f.page.locator('#history-toggle').click();
+    await f.page.getByRole('button', {name: 'Retomar / atualizar'}).click();
+    await f.waitForRun();
+    assert.deepEqual(f.stats.sourceInputs, [`https://open.spotify.com/playlist/${savedRecord.sourceId}`]);
+    const records = await f.history();
+    assert.equal(records.length, 1);
+    assert.equal(records[0].id, 'legacy-history');
+    assert.equal(records[0].sourceId, savedRecord.sourceId);
+    assert.equal(records[0].destinationId, savedRecord.destinationId);
+    assert.equal(records[0].added, 21);
+    assert.equal(f.stats.creates, 0);
+    assert.deepEqual(f.stats.searches, ['Artista Faixa 20']);
+    assert.deepEqual(f.stats.writes.flat(), [candidates[20].id]);
+    assert.deepEqual(f.stats.writeDestinations, [savedRecord.destinationId]);
+    assert.equal(f.remote.size, 21);
+    assert.equal(await f.page.locator('#progress-count').innerText(), '21 de 21');
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('a persistently incomplete Spotify source explains the failed reread and leaves its saved destination checkpoint untouched', async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    const original = (await f.history())[0];
+    const before = {creates: f.stats.creates, searches: f.stats.searches.length,
+      writes: f.stats.writes.flat().length, reads: f.stats.reads};
+    f.stats.sourceData = {id: f.sourceId, tracks: [{id: 'SourceTrack1234567890', name: 'Horizonte', artists: ['Artista'], duration: 180}],
+      incomplete: true, snapshotId: 'incomplete-snapshot', sourceInfo: {rawItems: 1, reportedTotal: 2, returnedTracks: 1,
+        localTracks: 0, tracksWithoutId: 0, excluded: {nonMusic: 0, missingMetadata: 0, duplicates: 0}, readAttempts: 2}};
+    await f.page.reload();
+    await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+    await f.page.locator('#history-toggle').click();
+    await f.page.getByRole('button', {name: 'Retomar / atualizar'}).click();
+    await f.waitForRun({withoutDestination: true});
+    assert.deepEqual((await f.history())[0], original, 'a partial source must not overwrite the previous complete checkpoint');
+    assert.equal(f.stats.creates, before.creates);
+    assert.equal(f.stats.searches.length, before.searches);
+    assert.equal(f.stats.writes.flat().length, before.writes);
+    assert.equal(f.stats.reads, before.reads, 'the incomplete source must stop before checking the destination');
+    assert.equal(f.stats.sourceInputs.length, 2);
+    assert.equal(await f.page.locator('#result-panel').isHidden(), true);
+    assert.match(await f.page.locator('#progress-title').innerText(), /interrompida/);
+    const log = await f.page.locator('#live-log').innerText();
+    assert.match(log, /Spotify informou 2 itens, mas retornou apenas 1 após uma nova leitura/);
+    assert.match(log, /HTTP 502.*SPOTIFY_PLAYLIST_INCOMPLETE/);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('incremental Spotify export preserves stable source keys for tracks without IDs and adds only the new local track', async () => {
+  const track = i => ({id: null, sourceKey: `spotify-local:source-${String(i).padStart(2, '0')}`,
+    name: `Faixa local ${String(i).padStart(2, '0')}`, artists: ['Artista'], duration: 180});
+  const candidate = (source, i) => ({id: `Local${String(i).padStart(6, '0')}`, title: source.name, name: source.name,
+    artists: ['Artista'], channel: 'Artista', duration: 180, url: `https://www.youtube.com/watch?v=Local${String(i).padStart(6, '0')}`});
+  const tracks = Array.from({length: 19}, (_, i) => track(i));
+  const candidates = tracks.map(candidate);
+  const f = await fixture('spotify-youtube', {tracks, candidates});
+  try {
+    await f.start();
+    const original = (await f.history())[0];
+    assert.equal(original.added, 19);
+    assert.deepEqual(Object.keys(original.processed).sort(), tracks.map(item => item.sourceKey).sort());
+    const added = track(19);
+    tracks.push(added); candidates.push(candidate(added, 19));
+    await f.page.reload();
+    await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+    await f.page.locator('#history-toggle').click();
+    await f.page.getByRole('button', {name: 'Retomar / atualizar'}).click();
+    await f.waitForRun();
+    const saved = (await f.history())[0];
+    assert.equal(saved.id, original.id);
+    assert.equal(saved.destinationId, original.destinationId);
+    assert.equal(saved.added, 20);
+    assert.equal(saved.processed[added.sourceKey], candidates[19].id);
+    assert.equal(f.stats.creates, 1);
+    assert.deepEqual(f.stats.searches.slice(19), ['Artista Faixa local 19']);
+    assert.deepEqual(f.stats.writes.flat().slice(19), [candidates[19].id]);
+    assert.equal(await f.page.locator('#progress-count').innerText(), '20 de 20');
+    await f.start();
+    assert.equal(f.stats.searches.length, 20);
+    assert.equal(f.stats.writes.flat().length, 20);
+    assert.equal(f.stats.creates, 1);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('updating an edited source removes deleted uncertain tracks from pending review without importing them', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack${String(i).padStart(9, '0')}`,
+    name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  try {
+    f.stats.pendingSearch = true;
+    await f.start();
+    const original = (await f.history())[0];
+    assert.equal(original.pending, 1);
+    assert.equal(original.pendingItems[0].source.id, tracks[0].id);
+    assert.equal(f.remote.size, 2);
+    const searchesBefore = f.stats.searches.length;
+    const writesBefore = f.stats.writes.flat().length;
+    const removed = tracks.shift();
+    await f.page.reload();
+    await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+    await f.page.locator('#history-toggle').click();
+    await f.page.getByRole('button', {name: 'Retomar / atualizar'}).click();
+    await f.waitForRun();
+    const saved = (await f.history())[0];
+    assert.equal(saved.id, original.id);
+    assert.equal(saved.destinationId, original.destinationId);
+    assert.equal(saved.pending, 0);
+    assert.deepEqual(saved.pendingItems, []);
+    assert.equal(saved.processed[removed.id], undefined);
+    assert.equal(f.stats.creates, 1);
+    assert.equal(f.stats.searches.length, searchesBefore);
+    assert.equal(f.stats.writes.flat().length, writesBefore);
+    assert.equal(f.remote.size, 2);
+    assert.equal(await f.page.locator('#pending-panel').isHidden(), true);
+    assert.equal(await f.page.locator('.pending-item').count(), 0);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
 for (const direction of ['spotify-youtube', 'youtube-spotify']) {
   test(`${direction}: old history and equivalent source links reuse the destination without duplicates`, async () => {
     const f = await fixture(direction, {existing: true, legacy: true});
     try {
       await f.page.locator('#history-toggle').click();
       await f.page.getByRole('button', {name: 'Retomar / atualizar'}).click();
-      await f.start();
+      await f.waitForRun();
       assert.equal(f.stats.creates, 0);
       assert.deepEqual(f.stats.writes.flat(), [f.candidates[1].id]);
       assert.equal(f.stats.reads, 2);
@@ -919,7 +1113,7 @@ for (const direction of ['spotify-youtube', 'youtube-spotify']) {
       assert.equal((await f.history()).length, 2);
       await f.page.locator('#history-toggle').click();
       await f.page.locator('.history-item').filter({hasText: 'Destino indisponível'}).getByRole('button', {name: 'Retomar / atualizar'}).click();
-      await f.start();
+      await f.waitForRun();
       assert.equal(f.stats.creates, 2, 'explicitly resuming the archived history must follow its replacement');
       assert.equal(f.stats.writes.length, confirmedWrites);
       assert.deepEqual(f.errors, []);
@@ -1171,6 +1365,38 @@ test('uses a targeted second search only when the first result is weak', async (
   } finally {await f.context.close();}
 });
 
+
+test('Google verification help stays collapsed until requested and links privacy and account access controls', async () => {
+  const f = await fixture();
+  try {
+    const help = f.page.locator('#google-access-help');
+    const summary = help.locator('summary');
+    const content = help.locator('.google-access-help-content');
+    assert.equal(await summary.isVisible(), true);
+    assert.match(await summary.innerText(), /app não verificado/);
+    assert.equal(await help.getAttribute('open'), null);
+    assert.equal(await content.isHidden(), true);
+    await summary.click();
+    assert.equal(await content.isVisible(), true);
+    const text = await content.innerText();
+    assert.match(text, /reconhece o aplicativo mostrado/);
+    assert.match(text, /Avançado/);
+    assert.match(text, /Acessar \[nome do aplicativo\]/);
+    assert.match(text, /Continuar/);
+    assert.match(await help.locator('.google-access-help-blocked').innerText(), /Acesso bloqueado.*responsável pelo app.*usuários de teste/s);
+    assert.equal(await help.getByRole('link', {name: 'Política de Privacidade'}).getAttribute('href'), '/privacidade.html');
+    const revoke = help.getByRole('link', {name: 'revogar o acesso na sua Conta Google'});
+    assert.equal(await revoke.getAttribute('href'), 'https://myaccount.google.com/connections');
+    assert.equal(await revoke.getAttribute('target'), '_blank');
+    assert.equal(await f.page.locator('#youtube-connect').getAttribute('href'), '/api/google/start');
+    await summary.click();
+    assert.equal(await content.isHidden(), true);
+    assert.equal(f.stats.creates, 0);
+    assert.equal(f.stats.searches.length, 0);
+    assert.equal(f.stats.writes.length, 0);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
 
 test('Spotify connect opens a tutorial, rejects invalid input and remembers a personal Client ID', async () => {
   const f = await fixture('spotify-youtube', {sharedAvailable: false});

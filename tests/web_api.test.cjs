@@ -921,6 +921,193 @@ test('source 404s are not reclassified as missing destinations', async () => {
   assert.equal(JSON.parse(result.body).code, 'GOOGLE_404');
 });
 
+function spotifySourceFixture(id, overrides = {}) {
+  return {type: 'track', id, name: `Source ${id || 'local'}`, artists: [{name: 'Source artist'}], duration_ms: 180000,
+    ...(id ? {uri: `spotify:track:${id}`} : {}), ...overrides};
+}
+
+function spotifySourceEvent(api) {
+  const session = api.testing.seal({user_id: 'source-user', access_token: 'private-source-token', expires_at: Date.now() + 3600000});
+  return event('spotify/playlist', {input: 'Playlist1234567890'}, `sp_session=${session}`);
+}
+
+test('each Spotify source read fetches fresh metadata and items and includes an appended local song', async () => {
+  const items = Array.from({length: 19}, (_, i) => ({item: spotifySourceFixture(`Track${i}`)}));
+  const requests = [];
+  let snapshot = 'snapshot-before';
+  const api = backend(async (url, options) => {
+    requests.push(url);
+    assert.equal(options.cache, 'no-store');
+    assert.equal(options.headers['Cache-Control'], 'no-cache');
+    assert.equal(options.headers.Authorization, 'Bearer private-source-token');
+    if (url.includes('/items?')) return response(200, {items, total: items.length, next: null});
+    return response(200, {name: 'Live source', snapshot_id: snapshot, items: {total: items.length}});
+  });
+  const request = spotifySourceEvent(api);
+  const before = JSON.parse((await api.handler(request)).body);
+  assert.equal(before.tracks.length, 19);
+  assert.equal(before.snapshotId, 'snapshot-before');
+  assert.equal(Object.hasOwn(before.tracks[0], 'sourceKey'), false);
+  items.push({is_local: true, item: spotifySourceFixture(null, {name: 'New local song', uri: 'spotify:local:Source%20artist:Album:New%20local%20song:180'})});
+  snapshot = 'snapshot-after';
+  const result = await api.handler(request);
+  const after = JSON.parse(result.body);
+  assert.equal(result.headers['Cache-Control'], 'no-store');
+  assert.equal(after.tracks.length, 20);
+  assert.equal(after.snapshotId, 'snapshot-after');
+  assert.equal(after.tracks.at(-1).id, null);
+  assert.equal(after.tracks.at(-1).sourceKey, 'spotify:local:Source%20artist:Album:New%20local%20song:180');
+  assert.deepEqual(after.sourceInfo, {rawItems: 20, reportedTotal: 20, returnedTracks: 20, localTracks: 1, tracksWithoutId: 1,
+    excluded: {nonMusic: 0, missingMetadata: 0, duplicates: 0}, readAttempts: 1});
+  assert.equal(after.incomplete, false);
+  assert.equal(requests.length, 4, 'two fresh provider requests per independent source read');
+  assert.doesNotMatch(JSON.stringify(after.sourceInfo), /private-source-token|refresh_token/);
+});
+
+test('Spotify source normalization preserves no-ID music, excludes episodes and deduplicates stable identities', async () => {
+  const local = spotifySourceFixture(null, {name: 'Local title', uri: 'spotify:local:Artist:Album:Local%20title:180', is_local: true});
+  const missingType = spotifySourceFixture('PartialTrack', {name: 'Partial music metadata'}); delete missingType.type;
+  const uriOnlyMusic = {name: 'URI identified music', uri: 'spotify:track:UriOnlyTrack'};
+  const metadataOnlyMusic = {name: 'Metadata identified music', artists: [{name: 'Artist'}], duration_ms: 90000};
+  const items = [
+    {track: spotifySourceFixture('NormalTrack')}, {item: spotifySourceFixture('NormalTrack')},
+    {track: local}, {item: local}, {item: missingType}, {item: uriOnlyMusic}, {item: metadataOnlyMusic},
+    {item: {...metadataOnlyMusic, name: '  Metadata   identified music  ', artists: [{name: ' Artist '}] }},
+    {item: spotifySourceFixture(null, {name: 'No URI local title', is_local: true})},
+    {item: {type: 'episode', id: 'Episode', name: 'Podcast', artists: [{name: 'Not a music track'}]}},
+    {item: {name: 'Untyped episode', uri: 'spotify:episode:Episode', artists: [{name: 'Podcast author'}]}},
+    {item: {name: 'Unknown non-music item'}}, {item: {type: 'track', id: 'NoName', artists: [{name: 'Artist'}]}},
+    {item: null}
+  ];
+  const api = backend(async url => url.includes('/items?') ? response(200, {items, total: items.length, next: null})
+    : response(200, {tracks: {total: items.length}}));
+  const request = spotifySourceEvent(api);
+  const data = JSON.parse((await api.handler(request)).body);
+  assert.equal(data.tracks.length, 6);
+  assert.equal(data.tracks[0].id, 'NormalTrack');
+  assert.equal(Object.hasOwn(data.tracks[0], 'sourceKey'), false);
+  assert.equal(data.tracks[1].id, null);
+  assert.equal(data.tracks[1].sourceKey, local.uri);
+  assert.equal(data.tracks[2].id, 'PartialTrack');
+  assert.equal(Object.hasOwn(data.tracks[2], 'sourceKey'), false);
+  assert.equal(data.tracks[3].sourceKey, 'spotify:track:UriOnlyTrack');
+  assert.match(data.tracks[4].sourceKey, /^spotify:metadata:[a-f0-9]{64}$/);
+  assert.equal(data.tracks[4].uri, null);
+  assert.match(data.tracks[5].sourceKey, /^spotify:metadata:[a-f0-9]{64}$/);
+  assert.notEqual(data.tracks[4].sourceKey, data.tracks[5].sourceKey);
+  assert.deepEqual(data.sourceInfo, {rawItems: 14, reportedTotal: 14, returnedTracks: 6, localTracks: 2, tracksWithoutId: 4,
+    excluded: {nonMusic: 3, missingMetadata: 2, duplicates: 3}, readAttempts: 1});
+  assert.equal(data.incomplete, false, 'filtering and duplicates must not be mistaken for a short provider read');
+  const reread = JSON.parse((await api.handler(request)).body);
+  assert.deepEqual(reread.tracks.map(track => track.sourceKey), data.tracks.map(track => track.sourceKey), 'no-ID keys survive another read');
+});
+
+test('Spotify source pagination advances by raw entries rather than accepted songs', async () => {
+  const first = Array.from({length: 50}, (_, i) => ({item: spotifySourceFixture(`PageTrack${i}`)}));
+  first[1] = {item: {type: 'episode', name: 'Podcast'}};
+  first[2] = {item: spotifySourceFixture('PageTrack0')};
+  first[3] = {is_local: true, item: spotifySourceFixture(null, {name: 'Local on first page', uri: 'spotify:local:Artist:Album:Local:180'})};
+  const offsets = [];
+  const api = backend(async url => {
+    if (!url.includes('/items?')) return response(200, {tracks: {total: 52}, snapshot_id: 'pagination-snapshot'});
+    const offset = Number(new URL(url).searchParams.get('offset')); offsets.push(offset);
+    return response(200, offset === 0 ? {items: first, total: 52, next: 'another-page'}
+      : {items: [{track: spotifySourceFixture('FinalTrack')}, {item: null}], total: 52, next: null});
+  });
+  const data = JSON.parse((await api.handler(spotifySourceEvent(api))).body);
+  assert.deepEqual(offsets, [0, 50]);
+  assert.equal(data.tracks.at(-1).id, 'FinalTrack');
+  assert.equal(data.tracks.length, 49);
+  assert.equal(data.snapshotId, 'pagination-snapshot');
+  assert.equal(data.sourceInfo.rawItems, 52);
+  assert.equal(data.sourceInfo.reportedTotal, 52);
+  assert.deepEqual(data.sourceInfo.excluded, {nonMusic: 1, missingMetadata: 1, duplicates: 1});
+  assert.equal(data.sourceInfo.readAttempts, 1);
+  assert.equal(data.incomplete, false);
+});
+
+test('a Spotify total larger than raw pages triggers one fresh reread that can recover a missing song', async () => {
+  const allItems = Array.from({length: 20}, (_, i) => ({item: spotifySourceFixture(`RecoverTrack${i}`)}));
+  let metadataReads = 0, itemReads = 0;
+  const api = backend(async (url, options) => {
+    assert.equal(options.cache, 'no-store');
+    assert.equal(options.headers['Cache-Control'], 'no-cache');
+    if (!url.includes('/items?')) return response(200, {name: `Snapshot ${++metadataReads}`, snapshot_id: `snapshot-${metadataReads}`, items: {total: 20}});
+    itemReads++;
+    return response(200, {items: itemReads === 1 ? allItems.slice(0, 19) : allItems, total: 20, next: null});
+  });
+  const data = JSON.parse((await api.handler(spotifySourceEvent(api))).body);
+  assert.equal(data.tracks.length, 20);
+  assert.equal(data.tracks.at(-1).id, 'RecoverTrack19');
+  assert.equal(data.snapshotId, 'snapshot-2');
+  assert.equal(data.name, 'Snapshot 2');
+  assert.equal(data.sourceInfo.rawItems, 20);
+  assert.equal(data.sourceInfo.readAttempts, 2);
+  assert.equal(data.incomplete, false);
+  assert.equal(metadataReads, 2); assert.equal(itemReads, 2);
+});
+
+test('a persistently short Spotify source stays incomplete after exactly one reread', async () => {
+  let metadataReads = 0, itemReads = 0;
+  const api = backend(async url => {
+    if (!url.includes('/items?')) { metadataReads++; return response(200, {tracks: {total: 20}}); }
+    itemReads++;
+    return response(200, {items: Array.from({length: 19}, (_, i) => ({item: spotifySourceFixture(`ShortTrack${i}`)})), next: null});
+  });
+  const result = await api.handler(spotifySourceEvent(api));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 200);
+  assert.equal(data.tracks.length, 19);
+  assert.equal(data.incomplete, true);
+  assert.equal(data.truncated, false);
+  assert.equal(data.sourceInfo.reportedTotal, 20);
+  assert.equal(data.sourceInfo.rawItems, 19);
+  assert.equal(data.sourceInfo.readAttempts, 2);
+  assert.equal(metadataReads, 2); assert.equal(itemReads, 2);
+});
+
+test('a coherent lower total on the fresh Spotify snapshot ends the bounded reread', async () => {
+  let metadataReads = 0, itemReads = 0;
+  const api = backend(async url => {
+    if (!url.includes('/items?')) return response(200, {items: {total: ++metadataReads === 1 ? 2 : 1}, snapshot_id: `snapshot-${metadataReads}`});
+    itemReads++; return response(200, {items: [{item: spotifySourceFixture('RemainingTrack')}], total: 1, next: null});
+  });
+  const data = JSON.parse((await api.handler(spotifySourceEvent(api))).body);
+  assert.equal(data.incomplete, false);
+  assert.equal(data.sourceInfo.reportedTotal, 1);
+  assert.equal(data.sourceInfo.readAttempts, 2);
+  assert.equal(data.snapshotId, 'snapshot-2');
+  assert.equal(metadataReads, 2); assert.equal(itemReads, 2);
+});
+
+test('Spotify source diagnostics accept only bounded typed totals and snapshot IDs', async () => {
+  let calls = 0;
+  const api = backend(async url => {
+    calls++;
+    return response(200, url.includes('/items?') ? {items: [{item: spotifySourceFixture('ValidTrack')}], total: '2', next: null}
+      : {snapshot_id: 'private\ninvalid-snapshot', items: {total: -1}, tracks: {total: 10000001}, private: 'private-provider-field'});
+  });
+  const data = JSON.parse((await api.handler(spotifySourceEvent(api))).body);
+  assert.equal(data.snapshotId, null);
+  assert.equal(data.sourceInfo.reportedTotal, null);
+  assert.equal(data.sourceInfo.readAttempts, 1);
+  assert.equal(data.incomplete, false);
+  assert.equal(calls, 2);
+  assert.doesNotMatch(JSON.stringify(data.sourceInfo), /private-provider-field|private-source-token|invalid-snapshot/);
+});
+
+test('Spotify source freshness policy does not change search request caching', async () => {
+  const api = backend(async (url, options) => {
+    assert.match(url, /\/search\?/);
+    assert.equal(options.cache, undefined);
+    assert.equal(options.headers['Cache-Control'], undefined);
+    return response(200, {tracks: {items: []}});
+  });
+  const source = spotifySourceEvent(api);
+  const result = await api.handler({...source, path: '/api/spotify/search', queryStringParameters: {q: 'Song'}});
+  assert.equal(result.statusCode, 200);
+});
+
 for (const [status, reason, cause] of [[403, 'quotaExceeded', 'quota'], [429, 'rateLimitExceeded', 'rate-limit'], [401, 'authError', 'auth']]) {
   test(`destination reads preserve ${cause} errors without suggesting replacement`, async () => {
     const api = backend(async () => response(status, {error: {message: 'Provider failure', errors: [{reason}]}}));

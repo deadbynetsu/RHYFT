@@ -17,6 +17,12 @@
     } catch { return []; }
   }
 
+  function sourceId(item) {
+    const pattern = item.direction === 'spotify-youtube' ? /^[A-Za-z0-9]{10,30}$/ : /^[A-Za-z0-9_-]{10,}$/;
+    return typeof item.sourceId === 'string' && pattern.test(item.sourceId)
+      ? item.sourceId : playlistId(item.direction, item.sourceInput);
+  }
+
   function save(record) {
     const items = load().filter(item => item.id !== record.id);
     // Keep a migration checkpoint as soon as a destination exists, not just at completion.
@@ -28,7 +34,7 @@
     const id = playlistId(direction, input);
     if (!id) return null;
     const records = load().filter(item => item.status !== 'destination-unavailable' && item.direction === direction &&
-      playlistId(direction, item.sourceInput) === id &&
+      sourceId(item) === id &&
       playlistId(direction, item.destinationId || item.destinationUrl, true));
     if (accountId) {
       const own = records.find(item => item.destinationAccountId === accountId);
@@ -39,5 +45,5 @@
     return records[0] || null;
   }
 
-  window.RhyftMigrationStore = { load, save, find, playlistId };
+  window.RhyftMigrationStore = { load, save, find, playlistId, sourceId };
 })();

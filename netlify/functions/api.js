@@ -542,28 +542,84 @@ async function logoutRoute(event) {
   return json(200, { ok: true }, cookies);
 }
 
-async function spotifyPlaylistRoute(event) {
-  const auth = await spotifyAuth(event); const id = spotifyId(event.queryStringParameters?.input);
-  let name = 'Playlist do Spotify', url = `https://open.spotify.com/playlist/${id}`;
+function spotifySourceTrack(entry) {
+  const t = entry?.item || entry?.track || entry;
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return { excluded: 'missingMetadata' };
+  const rawUri = typeof t.uri === 'string' ? t.uri : '';
+  if ((t.type && t.type !== 'track') || rawUri.startsWith('spotify:episode:')) return { excluded: 'nonMusic' };
+  const name = typeof t.name === 'string' ? t.name.trim() : '';
+  if (!name) return { excluded: 'missingMetadata' };
+  const artists = (Array.isArray(t.artists) ? t.artists : [])
+    .map(artist => typeof artist?.name === 'string' ? artist.name.trim() : '').filter(Boolean);
+  const localUri = /^spotify:local:[^\r\n]{1,1024}$/.test(rawUri);
+  const trackUri = /^spotify:track:[A-Za-z0-9]+$/.test(rawUri);
+  const local = entry?.is_local === true || t.is_local === true || localUri;
+  // Local files have no catalogue ID. Some Spotify item responses also omit
+  // type; music metadata/URI can identify them without accepting episodes.
+  if (!t.type && !artists.length && !trackUri && !local) return { excluded: 'nonMusic' };
+  const id = typeof t.id === 'string' && t.id ? t.id : null;
+  const duration = Number.isFinite(t.duration_ms) && t.duration_ms > 0 ? Math.round(t.duration_ms / 1000) : null;
+  const track = { id, name, artists, duration, uri: localUri || trackUri ? rawUri : id ? `spotify:track:${id}` : null, url: t.external_urls?.spotify || null };
+  if (!id) {
+    const normalized = text => text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+    const metadata = JSON.stringify([normalized(name), artists.map(normalized), duration]);
+    track.sourceKey = localUri || trackUri ? rawUri : `spotify:metadata:${crypto.createHash('sha256').update(metadata).digest('hex')}`;
+  }
+  return { track, local, key: id ? `id:${id}` : `source:${track.sourceKey}` };
+}
+
+function spotifySourceTotal(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 10000000 ? value : null;
+}
+
+async function readSpotifySource(id, accessToken) {
+  let name = 'Playlist do Spotify', url = `https://open.spotify.com/playlist/${id}`, snapshotId = null, reportedTotal = null;
+  // Source snapshots must reflect edits made since an earlier migration. Keep
+  // this cache policy specific to source reads, rather than changing auth or
+  // destination requests globally.
+  const fresh = { headers: { ...bearer(accessToken), 'Cache-Control': 'no-cache' }, cache: 'no-store' };
   try {
-    const info = await providerFetch(`${SPOTIFY_API}/playlists/${id}`, { headers: bearer(auth.accessToken) }, 'spotify');
+    const info = await providerFetch(`${SPOTIFY_API}/playlists/${id}`, fresh, 'spotify');
     name = info.name || name; url = info.external_urls?.spotify || url;
+    if (typeof info.snapshot_id === 'string' && /^[A-Za-z0-9+/_=-]{1,200}$/.test(info.snapshot_id)) snapshotId = info.snapshot_id;
+    reportedTotal = spotifySourceTotal(info.items?.total) ?? spotifySourceTotal(info.tracks?.total);
   } catch {}
-  const tracks = []; let offset = 0, truncated = false;
+  const tracks = [], seen = new Set();
+  const excluded = { nonMusic: 0, missingMetadata: 0, duplicates: 0 };
+  let offset = 0, rawItems = 0, localTracks = 0, tracksWithoutId = 0, truncated = false;
   while (tracks.length < 2000) {
-    const data = await providerFetch(`${SPOTIFY_API}/playlists/${id}/items?limit=50&offset=${offset}`, { headers: bearer(auth.accessToken) }, 'spotify');
-    const items = data.items || [];
+    const data = await providerFetch(`${SPOTIFY_API}/playlists/${id}/items?limit=50&offset=${offset}`, fresh, 'spotify');
+    const items = Array.isArray(data.items) ? data.items : [];
+    const pageTotal = spotifySourceTotal(data.total);
+    if (pageTotal !== null) reportedTotal = Math.max(reportedTotal ?? 0, pageTotal);
+    rawItems += items.length;
     for (const entry of items) {
-      const t = entry.item || entry.track || entry;
-      if (!t || t.type !== 'track' || !t.id || !t.name) continue;
-      tracks.push({ id: t.id, name: t.name, artists: (t.artists || []).map(a => a.name).filter(Boolean), duration: t.duration_ms ? Math.round(t.duration_ms / 1000) : null, uri: t.uri || `spotify:track:${t.id}`, url: t.external_urls?.spotify || null });
+      const normalized = spotifySourceTrack(entry);
+      if (normalized.excluded) { excluded[normalized.excluded]++; continue; }
+      if (seen.has(normalized.key)) { excluded.duplicates++; continue; }
+      seen.add(normalized.key); tracks.push(normalized.track);
+      if (normalized.local) localTracks++;
+      if (!normalized.track.id) tracksWithoutId++;
       if (tracks.length >= 2000) break;
     }
     offset += items.length;
     if (!items.length || !data.next) break;
   }
   if (tracks.length >= 2000) truncated = true;
-  return json(200, { id, name, url, tracks, truncated }, auth.setCookies);
+  const incomplete = !truncated && reportedTotal !== null && reportedTotal > rawItems;
+  return { id, name, url, tracks, truncated, incomplete, snapshotId,
+    sourceInfo: { rawItems, reportedTotal, returnedTracks: tracks.length, localTracks, tracksWithoutId, excluded } };
+}
+
+async function spotifyPlaylistRoute(event) {
+  const auth = await spotifyAuth(event); const id = spotifyId(event.queryStringParameters?.input);
+  let source = await readSpotifySource(id, auth.accessToken), readAttempts = 1;
+  // A provider total larger than the raw pages can mean a stale/changed
+  // snapshot. One fresh reread is bounded; filtered or duplicate music does
+  // not trigger it, and a persistent short read remains visibly incomplete.
+  if (source.incomplete) { source = await readSpotifySource(id, auth.accessToken); readAttempts++; }
+  source.sourceInfo.readAttempts = readAttempts;
+  return json(200, source, auth.setCookies);
 }
 
 async function spotifySearchRoute(event) {

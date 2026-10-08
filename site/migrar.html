@@ -7,16 +7,16 @@
   <meta name="description" content="Migre playlists entre Spotify e YouTube Music diretamente pelo navegador.">
   <meta name="theme-color" content="#0B0C12">
   <link rel="icon" href="/brand.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=2">
+  <link rel="stylesheet" href="/styles.css?v=3">
   <link rel="stylesheet" href="/history.css">
   <link rel="stylesheet" href="/spotify-setup.css?v=2">
-  <script src="/migration-store.js?v=2" defer></script>
+  <script src="/migration-store.js?v=3" defer></script>
   <script src="/music-matching.js" defer></script>
   <script src="/spotify-setup.js?v=2" defer></script>
   <script src="/provider-pacing.js?v=2" defer></script>
   <script src="/search-cache.js?v=2" defer></script>
-  <script src="/migrar.js?v=9" defer></script>
-  <script src="/history.js?v=2" defer></script>
+  <script src="/migrar.js?v=10" defer></script>
+  <script src="/history.js?v=3" defer></script>
 </head>
 <body class="migrate-page">
   <div class="noise" aria-hidden="true"></div>
@@ -39,7 +39,7 @@
         <div>
           <small>HISTÓRICO LOCAL</small>
           <h2>Suas migrações recentes</h2>
-          <p>Abra playlists prontas ou retome uma migração na mesma playlist de destino.</p>
+          <p>Abra playlists prontas ou clique em Retomar / atualizar para buscar músicas novas e continuar na mesma playlist de destino.</p>
         </div>
         <div class="history-head-actions">
           <button class="btn btn-small btn-secondary" id="history-export" type="button">Exportar JSON</button>
@@ -71,6 +71,21 @@
         <div class="account-actions"><a class="btn btn-small btn-secondary" id="youtube-connect" href="/api/google/start">Conectar</a><button class="text-action" id="youtube-logout" hidden>Desconectar</button></div>
       </article>
     </section>
+
+    <details class="google-access-help" id="google-access-help">
+      <summary>O Google mostrou “app não verificado”?</summary>
+      <div class="google-access-help-content">
+        <p>Esse aviso aparece porque a conexão com o YouTube usa um aplicativo que ainda não passou pela verificação do Google.</p>
+        <p>Se você abriu a conexão pelo RHYFT, reconhece o aplicativo mostrado e deseja autorizar o acesso:</p>
+        <ol>
+          <li>Na tela <strong>“O Google não verificou este app”</strong>, clique em <strong>Avançado</strong>.</li>
+          <li>Clique em <strong>“Acessar [nome do aplicativo] (não seguro)”</strong>. O texto pode variar conforme o idioma.</li>
+          <li>Confira as permissões e clique em <strong>Continuar</strong> ou <strong>Permitir</strong> para voltar ao RHYFT.</li>
+        </ol>
+        <p>O RHYFT usa a conexão para ler playlists, criar a playlist de destino e adicionar músicas no YouTube. Você pode consultar a <a href="/privacidade.html">Política de Privacidade</a> e <a href="https://myaccount.google.com/connections" target="_blank" rel="noreferrer">revogar o acesso na sua Conta Google</a> quando quiser.</p>
+        <p class="google-access-help-blocked"><strong>Apareceu “Acesso bloqueado” ou não existe a opção Avançado?</strong> Nesse caso, não dá para continuar por esse caminho. O responsável pelo app precisa conferir os usuários de teste e as restrições de acesso do Google.</p>
+      </div>
+    </details>
 
     <dialog id="spotify-setup" class="spotify-setup" aria-labelledby="spotify-setup-title">
       <div class="spotify-setup-head">
@@ -132,7 +147,7 @@
         <div class="input-wrap"><input id="playlist-input" autocomplete="off" placeholder="https://open.spotify.com/playlist/…"><span class="input-icon">↗</span></div>
         <label for="playlist-name">Nome da playlist de destino</label>
         <input id="playlist-name" maxlength="100" placeholder="Minha Playlist Importada">
-        <div class="form-note"><span>🔒</span><p>As senhas nunca passam pelo RHYFT. O acesso é feito por OAuth e as sessões Web ficam em cookies HttpOnly criptografados. Ao usar a mesma origem, a migração retoma na playlist salva neste navegador e confere as faixas já presentes.</p></div>
+        <div class="form-note"><span>🔒</span><p>Você entra pelas páginas oficiais do Spotify e do Google. Já exportou essa playlist e adicionou músicas? Use o mesmo link ou Retomar / atualizar no histórico: a origem será lida novamente e as músicas que faltam serão enviadas para a mesma playlist de destino. O histórico fica salvo neste navegador.</p></div>
         <div class="migration-actions">
           <button class="btn btn-primary btn-large" id="start-migration">▶ Iniciar migração</button>
           <button class="btn btn-secondary" id="pause-migration" disabled>Ⅱ Pausar</button>

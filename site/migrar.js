@@ -87,7 +87,7 @@
   }
 
   async function api(path, options = {}) {
-    const init = { method: (options.method || 'GET').toUpperCase(), credentials: 'same-origin', headers: {} };
+    const init = { method: (options.method || 'GET').toUpperCase(), credentials: 'same-origin', cache: 'no-store', headers: {} };
     if (options.body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
@@ -344,7 +344,7 @@
     }
   }
 
-  function sourceKey(track) { return track.id || queryFor(track); }
+  function sourceKey(track) { return track.sourceKey || track.id || queryFor(track); }
 
   function destinationAccount(kind) { return state.session?.[kind]?.accountId || null; }
 
@@ -352,7 +352,7 @@
     const kind = state.direction === 'spotify-youtube' ? 'youtube' : 'spotify';
     return store.find(state.direction, input, destinationAccount(kind)) || store.load().find(record =>
       record.status === 'destination-unavailable' && record.direction === state.direction &&
-      store.playlistId(state.direction, record.sourceInput) === store.playlistId(state.direction, input));
+      store.sourceId(record) === store.playlistId(state.direction, input));
   }
 
   function unavailableDestination(error) {
@@ -391,8 +391,11 @@
   async function prepareDestination(kind, source, name) {
     const accountId = destinationAccount(kind);
     const records = store.load();
+    const currentTracks = new Map(source.tracks.map(track => [sourceKey(track), track]));
+    const currentPending = items => (items || []).filter(item => currentTracks.has(sourceKey(item.source)) &&
+      !state.processed[sourceKey(item.source)]).map(item => ({...item, source: currentTracks.get(sourceKey(item.source)), resolved: false}));
     let previous = (state.selectedRecord && records.find(record => record.id === state.selectedRecord.id && record.direction === state.direction &&
-      store.playlistId(state.direction, record.sourceInput) === source.id)) || savedDestination();
+      store.sourceId(record) === source.id)) || savedDestination();
     state.selectedRecord = null;
     // An archived history item points to its successfully created replacement.
     const replacement = previous?.replacementId && records.find(record => record.id === previous.replacementId && record.status !== 'destination-unavailable');
@@ -418,7 +421,7 @@
         // Preserve the checkpoint even if the destination cannot currently be read.
         state.processed = { ...previous.processed };
         state.inFlight = previous.inFlight || [];
-        state.pending = previous.pendingItems || [];
+        state.pending = currentPending(previous.pendingItems);
         state.added = previous.added || 0;
         try { state.usedIds = await destinationIds(kind); }
         catch (error) {
@@ -441,7 +444,7 @@
             if (state.usedIds.has(entry.candidate.id)) state.processed[sourceKey(entry.source)] = entry.candidate.id;
           }
           state.inFlight = [];
-          state.pending = (previous.pendingItems || []).filter(item => !state.processed[sourceKey(item.source)]);
+          state.pending = currentPending(previous.pendingItems);
           log(`♻ Playlist “${state.destination.name}” recuperada do histórico; ${state.usedIds.size} faixa(s) já presentes.`, 'ok');
         }
       }
@@ -452,7 +455,7 @@
       state.destination = null; state.record = null; state.usedIds = new Set(); state.added = 0; state.inFlight = [];
       const sourceKeys = new Set(source.tracks.map(sourceKey));
       state.processed = Object.fromEntries(Object.entries(recover?.processed || {}).filter(([key, value]) => value === 'ignored' && sourceKeys.has(key)));
-      state.pending = (recover?.pendingItems || []).filter(item => sourceKeys.has(sourceKey(item.source)) && !state.processed[sourceKey(item.source)]).map(item => ({...item, resolved: false}));
+      state.pending = currentPending(recover?.pendingItems);
       name = name || recover?.destinationName;
       await checkpoint();
       const dest = await api(`/${kind}/playlist`, { method: 'POST', body: { name, expectedAccountId: accountId } });
@@ -468,6 +471,8 @@
       }
       log(`✓ Playlist “${name}” criada no ${kind === 'youtube' ? 'YouTube' : 'Spotify'}`, 'ok');
     }
+    Object.assign(state.record, {sourceInput: state.sourceInput, sourceId: source.id,
+      sourceTotal: source.tracks.length, sourceSnapshot: source.snapshotId || null});
     saveProgress('running');
     return state.destination;
   }
@@ -519,9 +524,9 @@
   }
 
   document.addEventListener('rhyft:resume', event => {
-    if (state.running) return;
+    if (state.running || state.reviewing) return;
     state.selectedRecord = event.detail;
-    showToast('Ao iniciar, a migração continuará na playlist do histórico.');
+    startMigration();
   });
   ui.input.addEventListener('input', () => state.selectedRecord = null);
   ui.directions.forEach(button => button.addEventListener('click', () => {
@@ -576,9 +581,26 @@
   async function spotifyToYoutube(sourceInput, name) {
     ui.progressTitle.textContent = 'Lendo playlist do Spotify…';
     const source = await api(`/spotify/playlist?input=${encodeURIComponent(sourceInput)}`);
+    if (source.incomplete) {
+      const error = new Error(`O Spotify informou ${source.sourceInfo.reportedTotal} itens, mas retornou apenas ${source.sourceInfo.rawItems} após uma nova leitura. Retome para atualizar quando o Spotify disponibilizar a playlist completa.`);
+      error.context = {provider: 'spotify', operation: 'playlist-read'};
+      error.status = 502; error.code = 'SPOTIFY_PLAYLIST_INCOMPLETE';
+      throw error;
+    }
     if (!source.tracks.length) throw new Error('A playlist do Spotify não possui faixas disponíveis para migrar.');
     state.sourceKeys = source.tracks.map(sourceKey);
     log(`✓ ${source.tracks.length} faixas carregadas do Spotify`, 'ok');
+    if (source.sourceInfo) {
+      const info = source.sourceInfo;
+      if (info.readAttempts > 1) log('♻ O Spotify retornou uma leitura incompleta. A playlist foi consultada novamente antes de continuar.');
+      if (info.localTracks) log(`✓ ${info.localTracks} faixa(s) local(is) incluída(s) na busca por título e artista.`, 'ok');
+      const excluded = [
+        [info.excluded?.nonMusic, 'item(ns) que não são músicas'],
+        [info.excluded?.missingMetadata, 'item(ns) sem título disponível'],
+        [info.excluded?.duplicates, 'música(s) repetida(s)']
+      ].filter(([count]) => count > 0).map(([count, reason]) => `${count} ${reason}`);
+      if (excluded.length) log(`ℹ ${info.rawItems} itens lidos do Spotify; ${source.tracks.length} músicas para migrar. Fora da migração: ${excluded.join('; ')}.`);
+    }
     progress(0, source.tracks.length);
     if (source.truncated) log('⚠ Playlist muito grande: esta sessão processará apenas as primeiras 2.000 faixas.', 'warn');
 
