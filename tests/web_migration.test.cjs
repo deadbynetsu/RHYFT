@@ -617,6 +617,34 @@ test('a changed catalog response format stops after one call and preserves manua
   } finally {await f.context.close();}
 });
 
+for (const [stage, method, label, shape] of [
+  ['catalog-init', 'GET', 'inicialização do catálogo', ['html', 'ytcfg.set', 'VISITOR_DATA']],
+  ['catalog-search', 'POST', 'resultados da busca', ['json', 'contents', 'musicCardShelfRenderer']]
+]) {
+  test(`public search diagnostics distinguish ${stage} ${method} and expose only known response structure names`, async () => {
+    const f = await fixture();
+    try {
+      f.stats.searchFailure = {all: true, status: 502, data: {error: 'Não consegui interpretar a resposta pública do YouTube Music.',
+        code: 'YOUTUBE_MUSIC_FORMAT_CHANGED', retryable: false, details: {
+          provider: 'youtube-music', operation: 'search', stage, method, cause: 'invalid-response', attempts: 1,
+          responseShape: [...shape, 'private-response-data', '<script>private-script</script>', {private: 'private-object-data'}],
+          debug: 'private-debug-data', html: 'private-html-data', cookie: 'private-cookie-data'
+        }}};
+      await f.start();
+      assert.equal(f.stats.searches.length, 1);
+      assert.equal(f.stats.writes.length, 0);
+      assert.equal((await f.history())[0].pending, f.candidates.length);
+      const log = await f.page.locator('#live-log').innerText();
+      assert.ok(log.includes(`etapa: ${label}`));
+      assert.ok(log.includes(`método: ${method}`));
+      assert.ok(log.includes(`estrutura: ${shape.join(', ')}`));
+      assert.doesNotMatch(log, /private-|formato.*mudou|captcha|bloqueou|Nova tentativa/i);
+      assert.equal(await f.page.locator('#live-log script').count(), 0);
+      assert.deepEqual(f.errors, []);
+    } finally {await f.context.close();}
+  });
+}
+
 test('manual link validation rejects hostile URLs and its official write ignores the public rate cooldown', async () => {
   const f = await fixture();
   const videoId = 'Manual12345';

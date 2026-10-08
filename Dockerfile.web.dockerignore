@@ -1,0 +1,14 @@
+# Context used only by Dockerfile.web. Runtime credentials stay outside the image.
+**
+!Dockerfile.web
+!Dockerfile.web.dockerignore
+!web-server.cjs
+!site/
+!site/**
+!netlify/
+!netlify/functions/
+!netlify/functions/**
+**/.env*
+**/.rhyft-web-session-secret
+**/node_modules/
+**/__pycache__/

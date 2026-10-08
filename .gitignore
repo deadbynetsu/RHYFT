@@ -20,3 +20,8 @@ erros.log
 progresso_*.json
 .venv/
 .test-tmp/
+
+# Configuração e chave privadas da instalação Web local
+.env.web
+.rhyft-web-session-secret
+.rhyft-web-session-secret.tmp

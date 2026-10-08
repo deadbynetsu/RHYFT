@@ -637,9 +637,9 @@ async function youtubeSearchRoute(event) {
   if (!pending) {
     pending = (async () => {
       let found = await musicClient.search(q, {filter, limit: 10});
-      // Unpublished/live recordings sometimes exist only in the video catalogue.
-      // This fallback remains anonymous; it never calls Data API search.list.
-      if (filter === 'songs' && !found.items.length) found = await musicClient.search(q, {filter: 'videos', limit: 10});
+      // The native app searches without a catalogue filter. Try that mode once
+      // only when the songs catalogue returned a valid, empty result.
+      if (filter === 'songs' && !found.items.length) found = await musicClient.search(q, {filter: null, limit: 10});
       const result = { items: found.items, source: 'youtube-music-public', filter: found.filter };
       youtubeSearchCache.set(cacheKey, {result, expiresAt: Date.now() + (found.items.length ? 900000 : 300000)});
       if (youtubeSearchCache.size > 100) youtubeSearchCache.delete(youtubeSearchCache.keys().next().value);

@@ -1,0 +1,198 @@
+[
+  {
+    "musicResponsiveListItemRenderer": {
+      "overlay": {
+        "musicItemThumbnailOverlayRenderer": {
+          "content": {
+            "musicPlayButtonRenderer": {
+              "playNavigationEndpoint": {
+                "watchEndpoint": {
+                  "videoId": "0m68rsj48X0",
+                  "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                      "musicVideoType": "MUSIC_VIDEO_TYPE_OMV"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "flexColumns": [
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "The Explanation",
+                  "navigationEndpoint": {
+                    "watchEndpoint": {
+                      "videoId": "0m68rsj48X0",
+                      "watchEndpointMusicSupportedConfigs": {
+                        "watchEndpointMusicConfig": {
+                          "musicVideoType": "MUSIC_VIDEO_TYPE_OMV"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "XXXTENTACION",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCnAcxgRZ065f_eXK1o85c1w",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "26M plays"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        }
+      ],
+      "fixedColumns": [
+        {
+          "musicResponsiveListItemFixedColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "0:51"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH",
+            "size": "MUSIC_RESPONSIVE_LIST_ITEM_FIXED_COLUMN_SIZE_SMALL"
+          }
+        }
+      ],
+      "playlistItemData": {
+        "videoId": "0m68rsj48X0"
+      }
+    }
+  },
+  {
+    "musicResponsiveListItemRenderer": {
+      "overlay": {
+        "musicItemThumbnailOverlayRenderer": {
+          "content": {
+            "musicPlayButtonRenderer": {
+              "playNavigationEndpoint": {
+                "watchEndpoint": {
+                  "videoId": "FAucVNRx_mU",
+                  "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                      "musicVideoType": "MUSIC_VIDEO_TYPE_OMV"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "flexColumns": [
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Jocelyn Flores",
+                  "navigationEndpoint": {
+                    "watchEndpoint": {
+                      "videoId": "FAucVNRx_mU",
+                      "watchEndpointMusicSupportedConfigs": {
+                        "watchEndpointMusicConfig": {
+                          "musicVideoType": "MUSIC_VIDEO_TYPE_OMV"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "XXXTENTACION",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCnAcxgRZ065f_eXK1o85c1w",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "1B plays"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        }
+      ],
+      "fixedColumns": [
+        {
+          "musicResponsiveListItemFixedColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "2:00"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH",
+            "size": "MUSIC_RESPONSIVE_LIST_ITEM_FIXED_COLUMN_SIZE_SMALL"
+          }
+        }
+      ],
+      "playlistItemData": {
+        "videoId": "FAucVNRx_mU"
+      }
+    }
+  }
+]

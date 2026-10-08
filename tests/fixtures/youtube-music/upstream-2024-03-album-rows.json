@@ -1,0 +1,166 @@
+[
+  {
+    "musicResponsiveListItemRenderer": {
+      "overlay": {
+        "musicItemThumbnailOverlayRenderer": {
+          "content": {
+            "musicPlayButtonRenderer": {
+              "playNavigationEndpoint": {
+                "watchEndpoint": {
+                  "videoId": "iKLU7z_xdYQ",
+                  "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                      "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "flexColumns": [
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Walk On Water (feat. Beyoncé)",
+                  "navigationEndpoint": {
+                    "watchEndpoint": {
+                      "videoId": "iKLU7z_xdYQ",
+                      "watchEndpointMusicSupportedConfigs": {
+                        "watchEndpointMusicConfig": {
+                          "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {},
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "155M plays"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        }
+      ],
+      "fixedColumns": [
+        {
+          "musicResponsiveListItemFixedColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "5:04"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH",
+            "size": "MUSIC_RESPONSIVE_LIST_ITEM_FIXED_COLUMN_SIZE_SMALL"
+          }
+        }
+      ],
+      "playlistItemData": {
+        "videoId": "iKLU7z_xdYQ"
+      }
+    }
+  },
+  {
+    "musicResponsiveListItemRenderer": {
+      "overlay": {
+        "musicItemThumbnailOverlayRenderer": {
+          "content": {
+            "musicPlayButtonRenderer": {
+              "playNavigationEndpoint": {
+                "watchEndpoint": {
+                  "videoId": "JrIoKNaM-8w",
+                  "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                      "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "flexColumns": [
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Believe",
+                  "navigationEndpoint": {
+                    "watchEndpoint": {
+                      "videoId": "JrIoKNaM-8w",
+                      "watchEndpointMusicSupportedConfigs": {
+                        "watchEndpointMusicConfig": {
+                          "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {},
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "15M plays"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        }
+      ],
+      "fixedColumns": [
+        {
+          "musicResponsiveListItemFixedColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "5:16"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH",
+            "size": "MUSIC_RESPONSIVE_LIST_ITEM_FIXED_COLUMN_SIZE_SMALL"
+          }
+        }
+      ],
+      "playlistItemData": {
+        "videoId": "JrIoKNaM-8w"
+      }
+    }
+  }
+]

@@ -65,6 +65,18 @@
       if (details.reason) codes.push(`motivo: ${details.reason}`);
       if (details.limitScope) codes.push(`limite: ${ {day: 'por dia', minute: 'por minuto', second: 'por segundo'}[details.limitScope] || details.limitScope}`);
       if (details.limitName) codes.push(`cota: ${details.limitName}`);
+      const stage = {'catalog-init': 'inicialização do catálogo', 'catalog-search': 'resultados da busca'}[details.stage];
+      if (stage) codes.push(`etapa: ${stage}`);
+      if (['GET', 'POST'].includes(details.method)) codes.push(`método: ${details.method}`);
+      const structuralNames = new Set(['html', 'json', 'text', 'ytcfg.set', 'ytcfg.data_', 'VISITOR_DATA',
+        'INNERTUBE_CONTEXT', 'INNERTUBE_CLIENT_VERSION', 'INNERTUBE_CONTEXT_CLIENT_VERSION',
+        'contents', 'responseContext', 'tabbedSearchResultsRenderer', 'singleColumnBrowseResultsRenderer',
+        'twoColumnSearchResultsRenderer', 'twoColumnBrowseResultsRenderer', 'sectionListRenderer',
+        'musicShelfRenderer', 'musicCardShelfRenderer', 'itemSectionRenderer', 'musicResponsiveListItemRenderer',
+        'musicTwoRowItemRenderer', 'musicMultiRowListItemRenderer', 'playlistItemData', 'continuationContents',
+        'musicShelfContinuation', 'messageRenderer', 'error']);
+      const shape = Array.isArray(details.responseShape) ? details.responseShape.filter(name => structuralNames.has(name)).slice(0, 12) : [];
+      if (shape.length) codes.push(`estrutura: ${shape.join(', ')}`);
       if (details.upstreamStatus && details.upstreamStatus !== error.status) codes.push(`plataforma: HTTP ${details.upstreamStatus}`);
       if (details.timeoutMs) codes.push(`prazo: ${details.timeoutMs / 1000}s`);
       if (details.attempts) codes.push(`tentativas no servidor: ${details.attempts}`);
@@ -609,7 +621,7 @@
             const blocked = isPublicSearchBlocked(error);
             log(blocked
               ? '  ↳ O YouTube Music bloqueou a busca pública. O motor foi interrompido sem novas consultas; escolha os links das faixas pendentes abaixo.'
-              : '  ↳ O formato de resposta do YouTube Music mudou. O motor foi interrompido sem novas consultas; escolha os links das faixas pendentes abaixo.', 'warn');
+              : '  ↳ Não foi possível interpretar a resposta do YouTube Music. A busca foi interrompida; escolha os links das faixas pendentes abaixo.', 'warn');
             progress(i, total, `${blocked ? 'Busca pública bloqueada' : 'Formato da busca incompatível'} · revisão por link disponível`);
             return;
           }

@@ -210,9 +210,19 @@ test('blocked anonymous initialization stops before any search and failed initia
   assert.equal(calls, 2);
 });
 
-test('a new homepage format is not evaluated or mistaken for a valid visitor identity', async () => {
-  const client = createClient({fetch: async () => response(200, '<script>window.userToken = "must-not-be-used";</script>')});
-  await assert.rejects(client.search('Song'), error => error.code === 'YOUTUBE_MUSIC_FORMAT_CHANGED' && error.details.method === 'GET');
+test('a successful homepage without visitor metadata remains searchable without executing or copying page scripts', async () => {
+  const calls = [];
+  const client = createClient({fetch: async (_url, request) => {
+    calls.push(request);
+    if (request.method === 'GET') return response(200, '<html><script>window.userToken = "must-not-be-used";</script></html>');
+    assert.equal(request.headers['X-Goog-Visitor-Id'], undefined);
+    assert.doesNotMatch(JSON.stringify(request), /must-not-be-used|userToken/);
+    return response(200, result());
+  }});
+  assert.equal((await client.search('Song')).items.length, 1);
+  assert.deepEqual(calls.map(request => request.method), ['GET', 'POST']);
+  assert.match(calls[0].headers['User-Agent'], /^Mozilla\/5\.0/);
+  assert.equal(calls[0].headers.Origin, 'https://music.youtube.com');
 });
 
 test('caller cancellation stops waiting for anonymous initialization and never sends a search', async () => {
@@ -229,4 +239,127 @@ test('caller cancellation stops waiting for anonymous initialization and never s
   finishInit();
   await Promise.resolve();
   assert.equal(searches, 0);
+});
+
+test('public page client version and nested visitor metadata are reused without any account or unrelated configuration', async () => {
+  const client = createClient({fetch: async (_url, request) => {
+    if (request.method === 'GET') return response(200, `<html><script>
+      ytcfg.set({"unrelated":"private-page-sentinel"});
+      ytcfg . set ({"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB_REMIX","clientVersion":"1.20260813.03.00","visitorData":"anonymous-nested-visitor","gl":"BR","userToken":"private-account-token"},"user":{"onBehalfOfUser":"private-user"}}});
+    </script></html>`);
+    assert.equal(request.headers['X-Goog-Visitor-Id'], 'anonymous-nested-visitor');
+    assert.deepEqual(JSON.parse(request.body).context, {client: {clientName: 'WEB_REMIX', clientVersion: '1.20260813.03.00', hl: 'en', gl: 'BR'}, user: {}});
+    assert.doesNotMatch(JSON.stringify(request), /private-page-sentinel|private-account-token|private-user|userToken|onBehalfOfUser/);
+    return response(200, result());
+  }});
+  assert.equal((await client.search('Song')).items.length, 1);
+});
+
+test('public configuration assignments and encoded visitor IDs are parsed as JSON rather than evaluated', async () => {
+  const client = createClient({fetch: async (_url, request) => {
+    if (request.method === 'GET') return response(200, '<script>ytcfg.data_ = {"VISITOR_DATA":"Cgt_public%3D%3D","INNERTUBE_CONTEXT_CLIENT_VERSION":"1.20260701.02.00","unrelated":{"escaped":"} \\\" {"}};</script>');
+    assert.equal(request.headers['X-Goog-Visitor-Id'], 'Cgt_public%3D%3D');
+    assert.equal(JSON.parse(request.body).context.client.clientVersion, '1.20260701.02.00');
+    return response(200, result());
+  }});
+  assert.equal((await client.search('Song')).items.length, 1);
+});
+
+function topCard({id = 'ZrOKjDZOtkA', title = 'Wonderwall (Live 1995)', type = 'MUSIC_VIDEO_TYPE_ATV', category = 'Song', artists = ['Oasis'], contents} = {}) {
+  return {musicCardShelfRenderer: {
+    title: {runs: [{text: title}]},
+    subtitle: {runs: [{text: category}, dot, ...artists.flatMap((name, index) => [...(index ? [dot] : []), linked(name, `UC_artist_${index}`)]), dot, {text: '4:19'}]},
+    onTap: {watchEndpoint: {videoId: id, watchEndpointMusicSupportedConfigs: {watchEndpointMusicConfig: {musicVideoType: type}}}},
+    ...(contents ? {contents} : {})
+  }};
+}
+
+test('a source-supported top-result-only music card is a valid result without requiring a Songs shelf', () => {
+  const data = {contents: {sectionListRenderer: {contents: [topCard()]}}};
+  assert.deepEqual(parseResults(data)[0], {id: 'ZrOKjDZOtkA', title: 'Wonderwall (Live 1995)', artists: ['Oasis'], channel: 'Oasis', duration: 259, url: 'https://www.youtube.com/watch?v=ZrOKjDZOtkA'});
+});
+
+test('top-card contents are parsed in order and duplicate video IDs are removed', () => {
+  const data = {contents: {sectionListRenderer: {contents: [topCard({contents: [{messageRenderer: {text: {runs: [{text: 'More from YouTube'}]}}}, row(), row({id: 'vU05Eksc_iM', title: 'Wonderwall official video'})]})]}}};
+  assert.deepEqual(parseResults(data).map(item => item.id), ['ZrOKjDZOtkA', 'vU05Eksc_iM']);
+});
+
+test('unfiltered public search omits params and supports mixed catalogue shelves like the Android client', async () => {
+  let searches = 0;
+  const mixed = {contents: {sectionListRenderer: {contents: [
+    {musicCardShelfRenderer: {title: {runs: [{text: 'Oasis'}]}, subtitle: {runs: [{text: 'Artist'}]}, onTap: {browseEndpoint: {browseId: 'UC_artist'}}}},
+    {musicShelfRenderer: {title: {runs: [{text: 'Albums'}]}, contents: [{musicResponsiveListItemRenderer: {navigationEndpoint: {browseEndpoint: {browseId: 'MPRE_album'}}}}]}},
+    topCard({type: 'MUSIC_VIDEO_TYPE_OMV', category: 'Video'}),
+    {musicShelfRenderer: {title: {runs: [{text: 'Songs'}]}, contents: [row({id: 'vU05Eksc_iM'})]}}
+  ]}}};
+  const client = publicClient({fetch: async (_url, request) => {
+    searches++;
+    assert.equal(Object.hasOwn(JSON.parse(request.body), 'params'), false);
+    return response(200, mixed);
+  }});
+  const found = await client.search('Oasis Wonderwall', {filter: null});
+  assert.equal(found.filter, null);
+  assert.equal(found.items.length, 2);
+  assert.equal(searches, 1);
+});
+
+test('mixed artist, album and playlist cards are ignored without turning recognized results into a format failure', () => {
+  const cards = ['Artist', 'Album', 'Playlist'].map(category => topCard({category}));
+  assert.deepEqual(parseResults({contents: {sectionListRenderer: {contents: cards}}}, {filter: null}), []);
+  assert.deepEqual(parseResults({responseContext: {serviceTrackingParams: []}}), []);
+  assert.throws(() => parseResults({unexpected: 'must-not-be-suppressed'}), error => error.code === 'YOUTUBE_MUSIC_FORMAT_CHANGED');
+});
+
+test('pinned 2024 and 2026 captured catalogue rows preserve actual titles, artists and fixed-column durations', () => {
+  const album = require('./fixtures/youtube-music/upstream-2024-03-album-rows.json');
+  const videos = require('./fixtures/youtube-music/upstream-2026-05-album-video-rows.json');
+  const artist = require('./fixtures/youtube-music/upstream-2026-05-artist-song-rows.json');
+  // The rows are captured upstream data; the surrounding search envelope is
+  // constructed here and is explicitly documented as synthetic in README.md.
+  const albumItems = parseResults(result(album));
+  assert.deepEqual(albumItems.map(item => [item.id, item.title, item.duration]), [['iKLU7z_xdYQ', 'Walk On Water (feat. Beyoncé)', 304], ['JrIoKNaM-8w', 'Believe', 316]]);
+  const videoItems = parseResults(result(videos), {filter: 'videos'});
+  assert.deepEqual(videoItems.map(item => [item.title, item.artists, item.duration]), [['The Explanation', ['XXXTENTACION'], 51], ['Jocelyn Flores', ['XXXTENTACION'], 120]]);
+  const artistItems = parseResults(result(artist));
+  assert.deepEqual(artistItems[0].artists, ['32ki', 'Hatsune Miku', 'Kasane Teto']);
+  assert.equal(artistItems[0].title, 'メズマライザー - Mesmerizer (feat. Hatsune Miku&Kasane Teto)');
+  assert.equal(artistItems[0].duration, null);
+});
+
+test('captured public playlistItemData IDs remain playable when the overlay and title navigation are absent', () => {
+  const captured = require('./fixtures/youtube-music/upstream-2026-05-artist-song-rows.json');
+  const reduced = structuredClone(captured);
+  for (const entry of reduced) {
+    delete entry.musicResponsiveListItemRenderer.overlay;
+    for (const run of entry.musicResponsiveListItemRenderer.flexColumns[0].musicResponsiveListItemFlexColumnRenderer.text.runs) delete run.navigationEndpoint;
+  }
+  assert.deepEqual(parseResults(result(reduced)).map(item => item.id), ['ibjWftkJrd4', 'G2PDJTkFiA8']);
+});
+
+test('two-column search results and thumbnail-overlay top-card endpoints are recognized', () => {
+  const card = topCard();
+  card.musicCardShelfRenderer.thumbnailOverlay = {musicItemThumbnailOverlayRenderer: {content: {musicPlayButtonRenderer: {playNavigationEndpoint: card.musicCardShelfRenderer.onTap}}}};
+  delete card.musicCardShelfRenderer.onTap;
+  const data = {contents: {twoColumnSearchResultsRenderer: {primaryContents: {sectionListRenderer: {contents: [card]}}}}};
+  assert.equal(parseResults(data)[0].id, 'ZrOKjDZOtkA');
+});
+
+test('a search format failure exposes only its stage and allowlisted structural names', async () => {
+  const client = publicClient({fetch: async () => response(200, {responseContext: {visitorData: 'private-visitor'}, contents: {unknownUserShape: {secret: 'private-secret'}}, privateQuery: 'private-query'})});
+  await assert.rejects(client.search('private query'), error => {
+    assert.equal(error.details.stage, 'catalog-search');
+    assert.equal(error.details.method, 'POST');
+    assert.equal(error.details.upstreamStatus, 200);
+    assert.deepEqual(error.details.responseShape, ['json', 'responseContext', 'contents']);
+    assert.doesNotMatch(JSON.stringify(error.details), /private-visitor|private-secret|private-query|unknownUserShape|privateQuery/);
+    assert.doesNotMatch(error.message, /mudou|incompleto/);
+    return true;
+  });
+});
+
+test('bootstrap connection failures retain the GET catalog-init stage and never send a search', async () => {
+  let calls = 0;
+  const client = createClient({fetch: async () => {calls++; throw new TypeError('private-network-details');}});
+  await assert.rejects(client.search('Song'), error => error.details.stage === 'catalog-init' && error.details.method === 'GET' && error.code === 'PROVIDER_UNAVAILABLE');
+  assert.equal(calls, 1);
 });

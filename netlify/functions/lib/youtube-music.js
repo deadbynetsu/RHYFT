@@ -5,6 +5,9 @@
 // operations must continue using OAuth, and upstream blocks must be respected.
 const SEARCH_URL = 'https://music.youtube.com/youtubei/v1/search?alt=json';
 const MUSIC_URL = 'https://music.youtube.com/';
+// Match the normal public client headers initialized by ytmusicapi 1.12.3.
+// This is a stable protocol header, not a fallback around an upstream block.
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0';
 const FILTERS = {
   songs: 'EgWKAQIIAWoMEA4QChADEAQQCRAF',
   videos: 'EgWKAQIQAWoMEA4QChADEAQQCRAF'
@@ -17,12 +20,48 @@ class MusicSearchError extends Error {
     this.status = status;
     this.code = code;
     this.retryable = retryable;
-    this.details = {provider: 'youtube-music', operation: 'search', method: 'POST', attempts: 1, ...details};
+    this.details = {provider: 'youtube-music', operation: 'search', method: 'POST', attempts: 1,
+      stage: details.method === 'GET' ? 'catalog-init' : 'catalog-search', ...details};
   }
 }
 
 function invalidResponse(details = {}) {
-  return new MusicSearchError(502, 'O formato da busca pública do YouTube Music mudou ou está incompleto. Não foi possível interpretar os resultados.', 'YOUTUBE_MUSIC_FORMAT_CHANGED', {cause: 'invalid-response', ...details});
+  const message = details.stage === 'catalog-init' || details.method === 'GET'
+    ? 'Não consegui interpretar a configuração pública do YouTube Music ao iniciar a busca.'
+    : 'Não foi possível interpretar os resultados da busca pública do YouTube Music.';
+  return new MusicSearchError(502, message, 'YOUTUBE_MUSIC_FORMAT_CHANGED', {cause: 'invalid-response', ...details});
+}
+
+const STRUCTURAL_KEYS = new Set(['html', 'json', 'text', 'ytcfg.set', 'ytcfg.data_', 'VISITOR_DATA',
+  'INNERTUBE_CONTEXT', 'INNERTUBE_CLIENT_VERSION', 'INNERTUBE_CONTEXT_CLIENT_VERSION',
+  'contents', 'responseContext', 'tabbedSearchResultsRenderer', 'singleColumnBrowseResultsRenderer',
+  'twoColumnSearchResultsRenderer', 'twoColumnBrowseResultsRenderer', 'sectionListRenderer',
+  'musicShelfRenderer', 'musicCardShelfRenderer', 'itemSectionRenderer', 'musicResponsiveListItemRenderer',
+  'musicTwoRowItemRenderer', 'musicMultiRowListItemRenderer', 'playlistItemData', 'continuationContents',
+  'musicShelfContinuation', 'messageRenderer', 'error']);
+
+function responseShape(value) {
+  const found = new Set();
+  if (typeof value === 'string') {
+    found.add(/^\s*(?:<!doctype\b|<html\b|<script\b)/i.test(value) ? 'html' : 'text');
+    if (/ytcfg\s*\.\s*set\s*\(/.test(value)) found.add('ytcfg.set');
+    if (/ytcfg\s*\.\s*data_\s*=/.test(value)) found.add('ytcfg.data_');
+    for (const key of ['VISITOR_DATA', 'INNERTUBE_CONTEXT', 'INNERTUBE_CLIENT_VERSION', 'INNERTUBE_CONTEXT_CLIENT_VERSION']) {
+      if (value.includes(`"${key}"`)) found.add(key);
+    }
+  } else {
+    found.add('json');
+    const queue = [{value, depth: 0}];
+    for (let index = 0; index < queue.length && index < 512 && found.size < 12; index++) {
+      const entry = queue[index];
+      if (!entry.value || typeof entry.value !== 'object' || entry.depth > 10) continue;
+      for (const [key, child] of Object.entries(entry.value)) {
+        if (STRUCTURAL_KEYS.has(key)) found.add(key);
+        if (child && typeof child === 'object' && queue.length < 512) queue.push({value: child, depth: entry.depth + 1});
+      }
+    }
+  }
+  return [...found].slice(0, 12);
 }
 
 function textOf(value) {
@@ -41,11 +80,16 @@ function endpointOf(renderer) {
   const title = renderer.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
   const candidates = [
     renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint,
+    renderer.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint,
     renderer.navigationEndpoint,
     ...(Array.isArray(title) ? title.map(run => run?.navigationEndpoint) : []),
     renderer.onTap
   ];
-  return candidates.find(endpoint => endpoint?.watchEndpoint?.videoId);
+  const endpoint = candidates.find(endpoint => endpoint?.watchEndpoint?.videoId);
+  if (endpoint) return endpoint;
+  // Actual 2024/2026 catalogue rows also carry the playable ID here; unlike a
+  // playlist ID or set-video ID, this is a public song/video identifier.
+  return renderer.playlistItemData?.videoId ? {watchEndpoint: {videoId: renderer.playlistItemData.videoId}} : undefined;
 }
 
 function metadataOf(runs) {
@@ -65,7 +109,7 @@ function metadataOf(runs) {
   return {artists, duration};
 }
 
-function itemOf(renderer, filter) {
+function itemOf(renderer, filter, card = false) {
   if (!renderer || typeof renderer !== 'object') return null;
   if (renderer.musicItemRendererDisplayPolicy === 'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT') return null;
   const endpoint = endpointOf(renderer);
@@ -75,10 +119,12 @@ function itemOf(renderer, filter) {
   const type = watch.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
   if (type === 'MUSIC_VIDEO_TYPE_PODCAST_EPISODE') return null;
   if (filter === 'songs' && type && type !== 'MUSIC_VIDEO_TYPE_ATV') return null;
+  if (card && /^(?:album|artist|playlist|podcast|episode)$/i.test(renderer.subtitle?.runs?.[0]?.text?.trim() || '')) return null;
   const columns = Array.isArray(renderer.flexColumns) ? renderer.flexColumns : [];
-  const title = textOf(columns[0]?.musicResponsiveListItemFlexColumnRenderer?.text).trim();
+  const title = textOf(card ? renderer.title : columns[0]?.musicResponsiveListItemFlexColumnRenderer?.text).trim();
   if (!title || title.length > 500) return null;
-  const runs = columns.slice(1).flatMap(column => column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []);
+  const runs = card ? [...(renderer.subtitle?.runs || [])]
+    : columns.slice(1).flatMap(column => column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []);
   for (const column of renderer.fixedColumns || []) {
     runs.push(...(column?.musicResponsiveListItemFixedColumnRenderer?.text?.runs || []));
   }
@@ -87,17 +133,47 @@ function itemOf(renderer, filter) {
 }
 
 function parseResults(data, {filter = 'songs', limit = 10} = {}) {
-  if (!FILTERS[filter] || !data || typeof data !== 'object' || Array.isArray(data)) throw invalidResponse();
+  const shape = responseShape(data);
+  const invalid = () => invalidResponse({stage: 'catalog-search', responseShape: shape});
+  if (filter !== null && !FILTERS[filter] || !data || typeof data !== 'object' || Array.isArray(data) || data.error) throw invalid();
   const content = data.contents;
-  const tabs = content?.tabbedSearchResultsRenderer?.tabs;
+  // Native SearchMixin treats a recognized response context without contents as
+  // an empty result. Unknown objects still fail instead of becoming cached [] .
+  if (!content && data.responseContext && typeof data.responseContext === 'object' && !Array.isArray(data.responseContext)
+    && !data.continuationContents) return [];
+  const tabs = content?.tabbedSearchResultsRenderer?.tabs || content?.singleColumnBrowseResultsRenderer?.tabs;
   const selected = Array.isArray(tabs) ? tabs.find(tab => tab?.tabRenderer?.selected)?.tabRenderer || tabs[0]?.tabRenderer : null;
-  const sections = (selected?.content || content)?.sectionListRenderer?.contents;
-  if (!Array.isArray(sections)) throw invalidResponse();
+  const area = selected?.content || content?.twoColumnSearchResultsRenderer?.primaryContents || content;
+  const sections = area?.sectionListRenderer?.contents;
+  if (!Array.isArray(sections)) throw invalid();
   const items = [], seen = new Set();
   let recognized = sections.length === 0, malformed = false;
+  const append = (renderer, card = false) => {
+    const item = itemOf(renderer, filter, card);
+    if (item && !seen.has(item.id)) { seen.add(item.id); items.push(item); return; }
+    if (item) return;
+    const type = endpointOf(renderer)?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+    const browseId = renderer.navigationEndpoint?.browseEndpoint?.browseId;
+    const nonMusicCard = card && /^(?:album|artist|playlist|podcast|episode)$/i.test(renderer.subtitle?.runs?.[0]?.text?.trim() || '');
+    const skipped = renderer.musicItemRendererDisplayPolicy === 'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT'
+      || type === 'MUSIC_VIDEO_TYPE_PODCAST_EPISODE' || filter === 'songs' && type && type !== 'MUSIC_VIDEO_TYPE_ATV'
+      || nonMusicCard || !endpointOf(renderer) && /^(?:UC|MPRE|VL|VM|MPLA|MPSP|MPED)/.test(browseId || '');
+    if (!skipped) malformed = true;
+  };
+  const appendRows = rows => {
+    if (!Array.isArray(rows)) { malformed = true; return; }
+    for (const result of rows) {
+      if (result?.messageRenderer || result?.musicDidYouMeanRenderer || result?.musicShowingResultsForRenderer
+        || result?.continuationItemRenderer) continue;
+      const renderer = result?.musicResponsiveListItemRenderer;
+      if (!renderer) { malformed = true; continue; }
+      append(renderer);
+    }
+  };
   for (const section of sections) {
     const shelf = section?.musicShelfRenderer;
     const itemSection = section?.itemSectionRenderer;
+    const card = section?.musicCardShelfRenderer;
     if (shelf || itemSection) {
       recognized = true;
       const contents = (shelf || itemSection).contents;
@@ -106,23 +182,18 @@ function parseResults(data, {filter = 'songs', limit = 10} = {}) {
       // The request uses English metadata. Never turn padded album/playlist
       // shelves into songs simply because they appeared in a filtered response.
       if (label && ['albums', 'artists', 'playlists', 'podcasts', 'episodes'].includes(label)) continue;
-      for (const result of contents) {
-        if (result?.messageRenderer || result?.musicDidYouMeanRenderer || result?.musicShowingResultsForRenderer) continue;
-        const renderer = result?.musicResponsiveListItemRenderer;
-        if (!renderer) { malformed = true; continue; }
-        const item = itemOf(renderer, filter);
-        if (item && !seen.has(item.id)) { seen.add(item.id); items.push(item); }
-        else if (!item) {
-          const type = endpointOf(renderer)?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
-          if (renderer.musicItemRendererDisplayPolicy !== 'MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT'
-            && type !== 'MUSIC_VIDEO_TYPE_PODCAST_EPISODE' && !(filter === 'songs' && type && type !== 'MUSIC_VIDEO_TYPE_ATV')) malformed = true;
-        }
-      }
+      appendRows(contents);
+    } else if (card) {
+      // Explicitly supported by ytmusicapi parse_top_result, including responses
+      // consisting of a top-result card without a separate Songs shelf.
+      recognized = true;
+      if (endpointOf(card)) append(card, true);
+      if (card.contents !== undefined) appendRows(card.contents);
     } else if (section?.musicDidYouMeanRenderer || section?.musicShowingResultsForRenderer || section?.messageRenderer) {
       recognized = true;
     }
   }
-  if (!recognized || !items.length && malformed) throw invalidResponse();
+  if (!recognized || !items.length && malformed) throw invalid();
   return items.slice(0, Math.max(1, Math.min(20, Number(limit) || 10)));
 }
 
@@ -134,32 +205,50 @@ function retryAfter(response, now) {
   return Number.isFinite(timestamp) ? Math.max(0, timestamp - now()) : 0;
 }
 
-function publicVisitor(html) {
+function readJsonObject(html, start) {
+  let depth = 0, quoted = false, escaped = false;
+  for (let position = start; position < html.length; position++) {
+    const character = html[position];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+    } else if (character === '"') quoted = true;
+    else if (character === '{') depth++;
+    else if (character === '}' && --depth === 0) {
+      try { return JSON.parse(html.slice(start, position + 1)); } catch { return null; }
+    }
+  }
+  return null;
+}
+
+function publicConfiguration(html, now) {
   // ytmusicapi gets this public, anonymous visitor context from ytcfg.set on
-  // the Music homepage. Parse balanced JSON rather than evaluating page code.
-  const expression = /ytcfg\.set\s*\(\s*(?=\{)/g;
+  // the Music homepage. Parse balanced JSON rather than evaluating page code;
+  // merge public object updates and consume only explicitly allowed fields.
+  const expression = /(?:ytcfg\s*\.\s*set\s*\(\s*|ytcfg\s*\.\s*data_\s*=\s*)(?=\{)/g;
+  const config = {};
   let match;
   while ((match = expression.exec(html))) {
-    const start = expression.lastIndex;
-    let depth = 0, quoted = false, escaped = false;
-    for (let position = start; position < html.length; position++) {
-      const character = html[position];
-      if (quoted) {
-        if (escaped) escaped = false;
-        else if (character === '\\') escaped = true;
-        else if (character === '"') quoted = false;
-      } else if (character === '"') quoted = true;
-      else if (character === '{') depth++;
-      else if (character === '}' && --depth === 0) {
-        let config;
-        try { config = JSON.parse(html.slice(start, position + 1)); } catch { break; }
-        const visitor = config.VISITOR_DATA;
-        if (typeof visitor === 'string' && /^[A-Za-z0-9+/_=%.-]{1,4096}$/.test(visitor)) return visitor;
-        break;
+    const update = readJsonObject(html, expression.lastIndex);
+    if (update && typeof update === 'object' && !Array.isArray(update)) {
+      for (const field of ['VISITOR_DATA', 'INNERTUBE_CONTEXT', 'INNERTUBE_CLIENT_VERSION', 'INNERTUBE_CONTEXT_CLIENT_VERSION']) {
+        if (Object.hasOwn(update, field)) config[field] = update[field];
       }
     }
   }
-  throw invalidResponse({method: 'GET'});
+  const pageClient = config.INNERTUBE_CONTEXT?.client;
+  const visitor = [config.VISITOR_DATA, pageClient?.visitorData].find(value =>
+    typeof value === 'string' && /^[A-Za-z0-9+/_=%.-]{1,4096}$/.test(value));
+  const version = [pageClient?.clientVersion, config.INNERTUBE_CLIENT_VERSION, config.INNERTUBE_CONTEXT_CLIENT_VERSION]
+    .find(value => typeof value === 'string' && /^\d+(?:\.[A-Za-z0-9_-]+){1,6}$/.test(value) && value.length <= 64);
+  const date = new Date(now()).toISOString().slice(0, 10).replace(/-/g, '');
+  const client = {clientName: 'WEB_REMIX', clientVersion: version || `1.${date}.01.00`, hl: 'en'};
+  if (typeof pageClient?.gl === 'string' && /^[A-Z]{2}$/.test(pageClient.gl)) client.gl = pageClient.gl;
+  // Native get_visitor_id returns an empty visitor when metadata is absent.
+  // That metadata is optional, so a successful anonymous homepage must not
+  // become a fatal format error before the public search has even been tried.
+  return {visitorData: visitor || null, client};
 }
 
 function awaitAbortable(promise, signal) {
@@ -177,14 +266,15 @@ function createClient(options = {}) {
   const schedule = options.setTimeout || setTimeout;
   const unschedule = options.clearTimeout || clearTimeout;
   const timeoutMs = Math.max(1, Number(options.timeoutMs) || 7000);
-  let visitor = null, visitorExpiresAt = 0, initializing = null;
+  let configuration = null, configurationExpiresAt = 0, initializing = null;
   const initialize = () => {
-    if (visitor && visitorExpiresAt > now()) return Promise.resolve(visitor);
+    if (configuration && configurationExpiresAt > now()) return Promise.resolve(configuration);
     if (initializing) return initializing;
     const controller = new AbortController();
     const timer = schedule(() => controller.abort(), timeoutMs);
     initializing = (async () => {
-      const response = await fetchPublic(MUSIC_URL, {method: 'GET', redirect: 'manual', signal: controller.signal, headers: {Accept: 'text/html'}});
+      const response = await fetchPublic(MUSIC_URL, {method: 'GET', redirect: 'manual', signal: controller.signal,
+        headers: {Accept: 'text/html', 'User-Agent': USER_AGENT, Origin: 'https://music.youtube.com', 'Accept-Language': 'en-US,en;q=0.9'}});
       const html = await response.text();
       if (response.status === 429) throw new MusicSearchError(429, 'O YouTube Music limitou temporariamente as buscas públicas. Aguarde o intervalo informado para continuar.', 'YOUTUBE_MUSIC_RATE_LIMIT', {method: 'GET', cause: 'rate-limit', upstreamStatus: 429, retryAfterMs: retryAfter(response, now)}, true);
       if ([401, 403].includes(response.status) || response.status >= 300 && response.status < 400
@@ -192,29 +282,30 @@ function createClient(options = {}) {
         throw new MusicSearchError(403, 'O YouTube Music recusou a busca pública ou solicitou verificação no site. A migração não consegue continuar essa busca automaticamente.', 'YOUTUBE_MUSIC_CATALOG_BLOCKED', {method: 'GET', cause: 'catalog-blocked', upstreamStatus: response.status});
       }
       if (!response.ok) throw new MusicSearchError(response.status >= 500 ? response.status : 502, 'O serviço de busca pública do YouTube Music está indisponível.', 'YOUTUBE_MUSIC_UNAVAILABLE', {method: 'GET', cause: 'network', upstreamStatus: response.status}, response.status >= 500);
-      visitor = publicVisitor(html);
-      visitorExpiresAt = now() + 15 * 60 * 1000;
-      return visitor;
+      configuration = publicConfiguration(html, now);
+      configurationExpiresAt = now() + 15 * 60 * 1000;
+      return configuration;
     })().finally(() => { unschedule(timer); initializing = null; });
     return initializing;
   };
   return {
     async search(input, {filter = 'songs', limit = 10, signal} = {}) {
       const query = String(input || '').trim().slice(0, 180);
-      if (!query || !FILTERS[filter]) throw new MusicSearchError(400, 'Informe uma busca musical válida.', 'BAD_QUERY');
+      if (!query || filter !== null && !FILTERS[filter]) throw new MusicSearchError(400, 'Informe uma busca musical válida.', 'BAD_QUERY');
       if (signal?.aborted) throw new MusicSearchError(499, 'A busca foi cancelada.', 'REQUEST_ABORTED', {cause: 'aborted'});
       const controller = new AbortController();
-      let timedOut = false;
+      let timedOut = false, stage = 'catalog-init';
       const abort = () => controller.abort();
       signal?.addEventListener('abort', abort, {once: true});
       const timer = schedule(() => { timedOut = true; controller.abort(); }, timeoutMs);
       try {
-        const visitorData = await awaitAbortable(initialize(), controller.signal);
-        const date = new Date(now()).toISOString().slice(0, 10).replace(/-/g, '');
+        const publicConfig = await awaitAbortable(initialize(), controller.signal);
+        stage = 'catalog-search';
         const response = await fetchPublic(SEARCH_URL, {
           method: 'POST', redirect: 'manual', signal: controller.signal,
-          headers: {'Content-Type': 'application/json', Accept: 'application/json', Origin: 'https://music.youtube.com', 'X-Goog-Visitor-Id': visitorData},
-          body: JSON.stringify({query, params: FILTERS[filter], context: {client: {clientName: 'WEB_REMIX', clientVersion: `1.${date}.01.00`, hl: 'en'}, user: {}}})
+          headers: {'Content-Type': 'application/json', Accept: 'application/json', Origin: 'https://music.youtube.com', 'User-Agent': USER_AGENT,
+            'Accept-Language': 'en-US,en;q=0.9', ...(publicConfig.visitorData ? {'X-Goog-Visitor-Id': publicConfig.visitorData} : {})},
+          body: JSON.stringify({query, ...(filter !== null ? {params: FILTERS[filter]} : {}), context: {client: publicConfig.client, user: {}}})
         });
         const text = await response.text();
         if (response.status === 429) throw new MusicSearchError(429, 'O YouTube Music limitou temporariamente as buscas públicas. Aguarde o intervalo informado para continuar.', 'YOUTUBE_MUSIC_RATE_LIMIT', {cause: 'rate-limit', upstreamStatus: 429, retryAfterMs: retryAfter(response, now)}, true);
@@ -224,14 +315,19 @@ function createClient(options = {}) {
         }
         if (!response.ok) throw new MusicSearchError(response.status >= 500 ? response.status : 502, 'O serviço de busca pública do YouTube Music está indisponível.', 'YOUTUBE_MUSIC_UNAVAILABLE', {cause: 'network', upstreamStatus: response.status}, response.status >= 500);
         let data;
-        try { data = JSON.parse(text); } catch { throw invalidResponse(); }
-        if (data?.error) throw invalidResponse();
-        return {items: parseResults(data, {filter, limit}), filter};
+        try { data = JSON.parse(text); } catch { throw invalidResponse({stage, upstreamStatus: response.status, responseShape: responseShape(text)}); }
+        try {
+          return {items: parseResults(data, {filter, limit}), filter};
+        } catch (error) {
+          if (error instanceof MusicSearchError) error.details.upstreamStatus = response.status;
+          throw error;
+        }
       } catch (error) {
         if (error instanceof MusicSearchError) throw error;
-        if (timedOut) throw new MusicSearchError(504, 'O YouTube Music demorou demais para responder à busca pública. Tente novamente.', 'PROVIDER_TIMEOUT', {cause: 'timeout', timeoutMs}, true);
-        if (signal?.aborted) throw new MusicSearchError(499, 'A busca foi cancelada.', 'REQUEST_ABORTED', {cause: 'aborted'});
-        throw new MusicSearchError(502, 'Não consegui acessar a busca pública do YouTube Music. Verifique a conexão e tente novamente.', 'PROVIDER_UNAVAILABLE', {cause: 'network'}, true);
+        const context = {stage, method: stage === 'catalog-init' ? 'GET' : 'POST'};
+        if (timedOut) throw new MusicSearchError(504, 'O YouTube Music demorou demais para responder à busca pública. Tente novamente.', 'PROVIDER_TIMEOUT', {...context, cause: 'timeout', timeoutMs}, true);
+        if (signal?.aborted) throw new MusicSearchError(499, 'A busca foi cancelada.', 'REQUEST_ABORTED', {...context, cause: 'aborted'});
+        throw new MusicSearchError(502, 'Não consegui acessar a busca pública do YouTube Music. Verifique a conexão e tente novamente.', 'PROVIDER_UNAVAILABLE', {...context, cause: 'network'}, true);
       } finally {
         unschedule(timer);
         signal?.removeEventListener('abort', abort);

@@ -59,6 +59,15 @@ function musicResults(ids = ['Video123450'], {filter = 'songs', title = 'Song', 
     contents: [{musicShelfRenderer: {contents}}]
   }}}}]}}};
 }
+function musicTopResult() {
+  return {contents: {sectionListRenderer: {contents: [{musicCardShelfRenderer: {
+    title: {runs: [{text: 'Song'}]},
+    subtitle: {runs: [{text: 'Video'}, {text: ' • '}, {text: 'Artist', navigationEndpoint: {browseEndpoint: {browseId: 'UCArtistFixture'}}},
+      {text: ' • '}, {text: '3:02'}]},
+    onTap: {watchEndpoint: {videoId: 'Video123450', watchEndpointMusicSupportedConfigs: {
+      watchEndpointMusicConfig: {musicVideoType: 'MUSIC_VIDEO_TYPE_OMV'}}}}
+  }}]}}};
+}
 
 for (const failure of ['abort', 'body-abort', 'server']) {
   test(`retries a transient GET failure (${failure})`, async () => {
@@ -428,27 +437,57 @@ test('public search cache expires successful and empty results separately and is
   assert.equal(calls, 5, 'empty results expire after five minutes instead of suppressing future matches');
 });
 
-test('a public song search falls back once to the video catalogue and caches that result', async () => {
+test('an empty public song search falls back once to native unfiltered search and caches that result', async () => {
   const params = [];
   const api = backend(async (_url, options) => {
     const body = JSON.parse(options.body); params.push(body.params);
-    return response(200, musicResults(params.length === 1 ? [] : ['Video123450'], {filter: 'videos'}));
+    if (params.length > 1) assert.equal(Object.hasOwn(body, 'params'), false, 'native unfiltered searches omit params entirely');
+    return response(200, params.length === 1 ? musicResults([]) : musicTopResult());
   });
   const result = await api.handler(event('youtube/music/search', {q: 'Unpublished Song'}));
   const data = JSON.parse(result.body);
   assert.equal(result.statusCode, 200);
   assert.equal(data.source, 'youtube-music-public');
-  assert.equal(data.filter, 'videos');
+  assert.equal(data.filter, null);
   assert.equal(data.items.length, 1);
-  assert.deepEqual(params, ['EgWKAQIIAWoMEA4QChADEAQQCRAF', 'EgWKAQIQAWoMEA4QChADEAQQCRAF']);
+  assert.equal(data.items[0].id, 'Video123450');
+  assert.deepEqual(data.items[0].artists, ['Artist']);
+  assert.equal(data.items[0].duration, 182);
+  assert.deepEqual(params, ['EgWKAQIIAWoMEA4QChADEAQQCRAF', undefined]);
   assert.equal((await api.handler(event('youtube/search', {q: 'Unpublished Song'}))).statusCode, 200);
   assert.equal(params.length, 2, 'the fallback result must be reused through the legacy alias');
-  assert.equal(api.testing.publicBootstrapRequests.length, 1, 'song and video lookups share one anonymous bootstrap');
+  assert.equal(api.testing.publicBootstrapRequests.length, 1, 'filtered and native lookups share one anonymous bootstrap');
+});
+
+test('explicit video searches never fall back, even when the catalogue is empty', async () => {
+  const params = [];
+  const api = backend(async (_url, options) => {
+    params.push(JSON.parse(options.body).params);
+    return response(200, musicResults([], {filter: 'videos'}));
+  });
+  const result = await api.handler(event('youtube/music/search', {q: 'Empty video query', filter: 'videos'}));
+  assert.equal(result.statusCode, 200);
+  const data = JSON.parse(result.body);
+  assert.deepEqual(data.items, []);
+  assert.equal(data.filter, 'videos');
+  assert.deepEqual(params, ['EgWKAQIQAWoMEA4QChADEAQQCRAF']);
+});
+
+test('an empty native fallback makes at most two search requests and retains its short cache', async () => {
+  let calls = 0;
+  const api = backend(async () => {calls++; return response(200, musicResults([]));});
+  const request = event('youtube/music/search', {q: 'Missing song'});
+  const first = await api.handler(request);
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual(JSON.parse(first.body), {items: [], source: 'youtube-music-public', filter: null});
+  assert.equal(calls, 2);
+  assert.equal((await api.handler(event('youtube/search', {q: 'missing   song'}))).statusCode, 200);
+  assert.equal(calls, 2, 'an empty native fallback must not be repeated through the legacy alias');
 });
 
 test('public search input errors do not contact either catalogue or Google OAuth', async () => {
   const api = backend(() => {throw new Error('invalid public input must not fetch');}, {SESSION_SECRET: ''});
-  for (const [query, code] of [[{q: ' '}, 'BAD_QUERY'], [{q: 'Song', filter: 'playlists'}, 'BAD_FILTER']]) {
+  for (const [query, code] of [[{q: ' '}, 'BAD_QUERY'], [{q: 'Song', filter: 'playlists'}, 'BAD_FILTER'], [{q: 'Song', filter: 'null'}, 'BAD_FILTER']]) {
     const result = await api.handler(event('youtube/music/search', query));
     assert.equal(result.statusCode, 400);
     assert.equal(JSON.parse(result.body).code, code);

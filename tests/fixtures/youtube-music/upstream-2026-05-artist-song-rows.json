@@ -1,0 +1,260 @@
+[
+  {
+    "musicResponsiveListItemRenderer": {
+      "overlay": {
+        "musicItemThumbnailOverlayRenderer": {
+          "content": {
+            "musicPlayButtonRenderer": {
+              "playNavigationEndpoint": {
+                "watchEndpoint": {
+                  "videoId": "ibjWftkJrd4",
+                  "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                      "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "flexColumns": [
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "メズマライザー - Mesmerizer (feat. Hatsune Miku&Kasane Teto)",
+                  "navigationEndpoint": {
+                    "watchEndpoint": {
+                      "videoId": "ibjWftkJrd4",
+                      "watchEndpointMusicSupportedConfigs": {
+                        "watchEndpointMusicConfig": {
+                          "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "32ki",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCFQwlbXuZQLsnUcL01Ip6_w",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "text": ", "
+                },
+                {
+                  "text": "Hatsune Miku",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCR29q3hGlpPRDrR1bk_8XqQ",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "text": " & "
+                },
+                {
+                  "text": "Kasane Teto",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCmwz6ogzQqq4FIYv7uLQAXQ",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "243M plays"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Mesmerizer",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "MPREb_NGwQppgBRiS",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_MEDIUM"
+          }
+        }
+      ],
+      "playlistItemData": {
+        "videoId": "ibjWftkJrd4"
+      }
+    }
+  },
+  {
+    "musicResponsiveListItemRenderer": {
+      "overlay": {
+        "musicItemThumbnailOverlayRenderer": {
+          "content": {
+            "musicPlayButtonRenderer": {
+              "playNavigationEndpoint": {
+                "watchEndpoint": {
+                  "videoId": "G2PDJTkFiA8",
+                  "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                      "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "flexColumns": [
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Miku",
+                  "navigationEndpoint": {
+                    "watchEndpoint": {
+                      "videoId": "G2PDJTkFiA8",
+                      "watchEndpointMusicSupportedConfigs": {
+                        "watchEndpointMusicConfig": {
+                          "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Anamanaguchi",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCrx_Cb89jDxicO7Uo0qvT1w",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "text": " & "
+                },
+                {
+                  "text": "Hatsune Miku",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "UCR29q3hGlpPRDrR1bk_8XqQ",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "146M plays"
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+          }
+        },
+        {
+          "musicResponsiveListItemFlexColumnRenderer": {
+            "text": {
+              "runs": [
+                {
+                  "text": "Miku",
+                  "navigationEndpoint": {
+                    "browseEndpoint": {
+                      "browseId": "MPREb_LOBqrUBNOOY",
+                      "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {
+                          "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_MEDIUM"
+          }
+        }
+      ],
+      "playlistItemData": {
+        "videoId": "G2PDJTkFiA8"
+      }
+    }
+  }
+]

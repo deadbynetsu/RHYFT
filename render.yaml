@@ -1,0 +1,26 @@
+# Example Blueprint. Importing it does not happen until you choose to deploy.
+services:
+  - type: web
+    name: rhyft-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile.web
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: NETLIFY_DEV
+        value: "false"
+      - key: SITE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+    # SPOTIFY_CLIENT_ID may be added in the dashboard for the shared app.
+    # Without it, users can continue connecting with their personal Client ID.
