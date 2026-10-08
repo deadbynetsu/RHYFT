@@ -43,8 +43,8 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
     channel: 'Artista', artists: ['Artista'], duration: 180, uri: `spotify:track:Music12345${i}`, url: `https://www.youtube.com/watch?v=Music12345${i}`}));
   const remote = new Set(options.existing ? [candidates[0].id] : []);
   const stats = {creates: 0, createIds: [], createBodies: [], replacementRequired: false, writes: [], writeDestinations: [], writeBodies: [], writeFailure: null, searches: [], searchTimes: [], reads: 0, readIds: [], missingDestinations: new Set(), readFailure: null, readFailureDestination: null,
-    accounts: {spotify: 'SpotifyAccount123', youtube: 'YouTubeAccount123'}, sourceFailure: null,
-    failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, searchGate: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false, loggedOut: []};
+    accounts: {spotify: 'SpotifyAccount123', youtube: 'YouTubeAccount123'}, sourceFailure: null, searchRoutes: [], writeTimes: [],
+    failSearch: false, loseWriteResponse: false, transientSearch: false, denyRead: false, dropWrite: false, pendingSearch: false, emptySearch: false, searchGate: null, searchGateQuery: null, searchFailure: null, denyReadAfterWrite: false, weakPrimary: false, loginQueries: [], forbiddenSource: false, loggedOut: []};
   const historyRecord = {id: 'legacy-history', createdAt: new Date().toISOString(), direction,
     sourceInput: sourceId, destinationName: 'Destino antigo', destinationUrl: destUrl, added: 1, pending: 0, skipped: 1, status: 'completed', ...options.savedRecord};
   if (options.legacyPending) {
@@ -87,24 +87,27 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
       return url.searchParams.has('page') ? json({id, ids: [...remote], nextPage: null})
         : json({id, name: 'Destino antigo', ids: [], nextPage: 'next'});
     }
-    if (url.pathname === `/api/${target}/search`) {
-      const query = url.searchParams.get('q'); stats.searches.push(query);
+    if (url.pathname === (target === 'youtube' ? '/api/youtube/music/search' : '/api/spotify/search')) {
+      const query = url.searchParams.get('q'); stats.searches.push(query); stats.searchRoutes.push(url.pathname);
+      const found = data => json(target === 'youtube' ? {...data, source: 'youtube-music-public'} : data);
       stats.searchTimes.push(await page.evaluate(() => Date.now()));
-      if (stats.searchGate) await stats.searchGate;
-      if (stats.searchFailure && query.includes('Tempestade') && (stats.searchFailure.remaining === undefined || stats.searchFailure.remaining > 0)) {
+      if (stats.searchGate && (!stats.searchGateQuery || query.includes(stats.searchGateQuery))) await stats.searchGate;
+      if (stats.searchFailure && (stats.searchFailure.all || query.includes('Tempestade')) && (stats.searchFailure.remaining === undefined || stats.searchFailure.remaining > 0)) {
         if (stats.searchFailure.remaining !== undefined) stats.searchFailure.remaining--;
         if (stats.searchFailure.html) return route.fulfill({status: 504, contentType: 'text/html', body: '<html>Gateway timeout</html>'});
         return json(stats.searchFailure.data, stats.searchFailure.status);
       }
-      if ((stats.pendingSearch || (stats.weakPrimary && !query.includes('"'))) && query.includes('Horizonte')) return json({items: [{...candidates[0], name: 'Outra música', title: 'Outra música', artists: ['Outro'], channel: 'Outro'}]});
+      if (stats.emptySearch) return found({items: []});
+      if ((stats.pendingSearch || (stats.weakPrimary && !query.includes('"'))) && query.includes('Horizonte')) return found({items: [{...candidates[0], name: 'Outra música', title: 'Outra música', artists: ['Outro'], channel: 'Outro'}]});
       if (stats.transientSearch) {stats.transientSearch = false; return json({error: 'The operation was aborted.', code: 'PROVIDER_TIMEOUT'}, 504);}
       if (stats.failSearch && query.includes('Tempestade')) return json({error: 'The operation was aborted.', code: 'PROVIDER_TIMEOUT'}, 504);
-      return json({items: [candidates[Math.max(0, tracks.findIndex(track => query.includes(track.name)))]]});
+      return found({items: [candidates[Math.max(0, tracks.findIndex(track => query.includes(track.name)))]]});
     }
     if (url.pathname === `/api/${target}/playlist/item` || url.pathname === `/api/${target}/playlist/items`) {
       const body = req.postDataJSON();
       const ids = target === 'youtube' ? [body.videoId] : body.uris.map(uri => uri.split(':')[2]);
       stats.writes.push(ids); stats.writeDestinations.push(body.playlistId); stats.writeBodies.push(body);
+      stats.writeTimes.push(await page.evaluate(() => Date.now()));
       if (stats.writeFailure) return json(stats.writeFailure.data, stats.writeFailure.status);
       if (stats.dropWrite) {
         stats.dropWrite = false;
@@ -138,6 +141,18 @@ async function fixture(direction = 'spotify-youtube', options = {}) {
   };
   const history = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), key);
   return {page, context, stats, remote, candidates, sourceId, history, start, errors};
+}
+
+async function advanceUntil(f, predicate, argument) {
+  let done = false;
+  const advancing = (async () => {
+    while (!done) {
+      await f.page.clock.runFor(1000);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  })();
+  try { await f.page.waitForFunction(predicate, argument, {timeout: 15000}); }
+  finally {done = true; await advancing;}
 }
 
 for (const direction of ['spotify-youtube', 'youtube-spotify']) {
@@ -194,10 +209,10 @@ test('an exhausted read failure persists progress and a reload resumes the same 
     assert.equal(Object.keys(saved.processed).length, 1);
     assert.equal(f.stats.creates, 1);
     const log = await f.page.locator('#live-log').innerText();
-    assert.match(log, /Falha ao buscar a música \(YouTube \/ Google\)/);
+    assert.match(log, /Falha ao buscar a música \(YouTube Music \(busca pública\)\)/);
     assert.match(log, /HTTP 504.*PROVIDER_TIMEOUT/);
     assert.match(log, /Nova tentativa de leitura \(2\/3\)/);
-    assert.match(log, /Busca falhou após 3 tentativas/);
+    assert.match(log, /busca não foi concluída após 3 tentativas/i);
     assert.equal(saved.skipped, 1);
     assert.doesNotMatch(log, /The operation was aborted/);
     f.stats.failSearch = false;
@@ -247,11 +262,11 @@ for (const direction of ['spotify-youtube', 'youtube-spotify']) {
   });
 }
 
-test('upstream aborts identify the failing detail request, exhaust three reads and defer the track', async () => {
+test('public catalog aborts identify the search, exhaust three reads and keep a manual choice', async () => {
   const f = await fixture();
   try {
-    f.stats.searchFailure = {status: 409, data: {error: 'The operation was aborted.', code: 'GOOGLE_409', retryable: true,
-      details: {provider: 'youtube', operation: 'track-details', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 2}}};
+    f.stats.searchFailure = {status: 409, data: {error: 'The operation was aborted.', code: 'YTMUSIC_409', retryable: true,
+      details: {provider: 'youtube-music', operation: 'search', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 1}}};
     await f.start();
     const saved = (await f.history())[0];
     assert.equal(saved.status, 'interrupted');
@@ -259,17 +274,17 @@ test('upstream aborts identify the failing detail request, exhaust three reads a
     assert.equal(Object.keys(saved.processed).length, 1);
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
     const log = await f.page.locator('#live-log').innerText();
-    assert.match(log, /Falha ao consultar os detalhes das músicas \(YouTube \/ Google\)/);
+    assert.match(log, /Falha ao buscar a música \(YouTube Music \(busca pública\)\)/);
     assert.match(log, /não informou o motivo/);
-    assert.match(log, /HTTP 409.*GOOGLE_409.*motivo: ABORTED/);
-    assert.match(log, /tentativas no servidor: 2.*tentativas no navegador: 3/);
+    assert.match(log, /HTTP 409.*YTMUSIC_409.*motivo: ABORTED/);
+    assert.match(log, /tentativas no servidor: 1.*tentativas no navegador: 3/);
     assert.doesNotMatch(log, /The operation was aborted|prazo:|cota/);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
 
-function rateFailure(provider = 'youtube', retryAfterMs = undefined) {
-  return {status: 429, data: {error: 'A cota do YouTube para este projeto foi atingida.', code: provider === 'youtube' ? 'GOOGLE_429' : 'SPOTIFY_429', retryable: false,
+function rateFailure(provider = 'youtube-music', retryAfterMs = undefined) {
+  return {status: 429, data: {error: 'O catálogo limitou temporariamente as requisições.', code: provider === 'youtube-music' ? 'YTMUSIC_429' : 'SPOTIFY_429', retryable: false,
     details: {provider, operation: 'search', cause: 'rate-limit', reason: 'rateLimitExceeded', attempts: 1, retryAfterMs}}};
 }
 
@@ -280,14 +295,14 @@ test('a temporary rate limit waits and recovers automatically on the third searc
     await f.start();
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
     const times = f.stats.searchTimes.slice(1);
-    assert.ok(times[1] - times[0] >= 60000, 'the first retry must wait for the whole window');
-    assert.ok(times[2] - times[1] >= 120000, 'the second retry must back off further');
+    assert.ok(times[1] - times[0] >= 15000, 'the first retry must wait for the whole public-catalog window');
+    assert.ok(times[2] - times[1] >= 30000, 'the second retry must back off further');
     assert.equal((await f.history())[0].status, 'completed');
     assert.equal((await f.history())[0].skipped, 0);
     assert.equal(f.remote.size, 2);
     const log = await f.page.locator('#live-log').innerText();
-    assert.match(log, /Todas as chamadas.*aguardam 60s/);
-    assert.match(log, /Todas as chamadas.*aguardam 120s/);
+    assert.match(log, /Todas as chamadas.*aguardam 15s/);
+    assert.match(log, /Todas as chamadas.*aguardam 30s/);
     assert.doesNotMatch(log, /cota.*atingida|Migração interrompida/);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
@@ -298,19 +313,21 @@ for (const direction of ['spotify-youtube', 'youtube-spotify']) {
     const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
     const f = await fixture(direction, {tracks, virtualClock: true});
     try {
-      f.stats.searchFailure = rateFailure(direction === 'spotify-youtube' ? 'youtube' : 'spotify');
+      f.stats.searchFailure = rateFailure(direction === 'spotify-youtube' ? 'youtube-music' : 'spotify');
       await f.start();
       assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 3);
       assert.ok(f.stats.searches.some(q => q.includes('Aurora')));
       const aurora = f.stats.searches.findIndex(q => q.includes('Aurora'));
-      assert.ok(f.stats.searchTimes[aurora] - f.stats.searchTimes[aurora - 1] >= (direction === 'spotify-youtube' ? 240000 : 120000),
+      assert.ok(f.stats.searchTimes[aurora] - f.stats.searchTimes[aurora - 1] >= (direction === 'spotify-youtube' ? 60000 : 120000),
         'the next track must honor the last cooldown, without resetting it');
       assert.deepEqual(f.stats.writes.flat(), [f.candidates[0].id, f.candidates[2].id]);
       const saved = (await f.history())[0];
       assert.equal(saved.status, 'interrupted');
       assert.equal(saved.skipped, 1);
       assert.equal(saved.processed[tracks[1].id], undefined, 'a deferred track must remain eligible for retry');
-      assert.match(await f.page.locator('#live-log').innerText(), /Busca falhou após 3 tentativas.*seguindo com as próximas/);
+      assert.match(await f.page.locator('#live-log').innerText(), direction === 'spotify-youtube'
+        ? /busca não foi concluída após 3 tentativas.*seguindo com as próximas/i
+        : /Busca falhou após 3 tentativas.*seguindo com as próximas/);
       f.stats.searchFailure = null;
       await f.start();
       assert.equal(f.stats.creates, 1);
@@ -325,7 +342,7 @@ for (const direction of ['spotify-youtube', 'youtube-spotify']) {
 test('a longer provider Retry-After is respected before retrying a search', async () => {
   const f = await fixture('spotify-youtube', {virtualClock: true});
   try {
-    f.stats.searchFailure = {...rateFailure('youtube', 90000), remaining: 1};
+    f.stats.searchFailure = {...rateFailure('youtube-music', 90000), remaining: 1};
     await f.start();
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 2);
     assert.ok(f.stats.searchTimes[2] - f.stats.searchTimes[1] >= 90000);
@@ -340,11 +357,11 @@ test('pause and cancel stay responsive while waiting after a rate limit', async 
   try {
     f.stats.searchFailure = rateFailure();
     await f.page.locator('#start-migration').click();
-    for (let i = 0; i < 15 && !await f.page.locator('#live-log').textContent().then(text => text.includes('aguardam 60s')); i++) {
+    for (let i = 0; i < 15 && !await f.page.locator('#live-log').textContent().then(text => text.includes('aguardam 15s')); i++) {
       await f.page.clock.runFor(1000);
       await new Promise(resolve => setTimeout(resolve, 20));
     }
-    assert.match(await f.page.locator('#progress-title').innerText(), /YouTube limitou as chamadas.*aguardando/);
+    assert.match(await f.page.locator('#progress-title').innerText(), /YouTube Music.*limitou as chamadas.*aguardando/);
     await f.page.locator('#pause-migration').click();
     await f.page.clock.runFor(65000);
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
@@ -358,12 +375,12 @@ test('pause and cancel stay responsive while waiting after a rate limit', async 
   } finally {await f.context.close();}
 });
 
-test('a reload cannot bypass the saved YouTube cooldown', async () => {
+test('a reload preserves the public catalog cooldown without blocking destination checks', async () => {
   const f = await fixture();
   try {
     f.stats.searchFailure = rateFailure();
     await f.page.locator('#start-migration').click();
-    for (let i = 0; i < 15 && !await f.page.locator('#live-log').textContent().then(text => text.includes('aguardam 60s')); i++) {
+    for (let i = 0; i < 15 && !await f.page.locator('#live-log').textContent().then(text => text.includes('aguardam 15s')); i++) {
       await f.page.clock.runFor(1000);
       await new Promise(resolve => setTimeout(resolve, 20));
     }
@@ -380,21 +397,299 @@ test('a reload cannot bypass the saved YouTube cooldown', async () => {
       await f.page.clock.runFor(1000);
       await new Promise(resolve => setTimeout(resolve, 20));
     }
-    assert.equal(f.stats.reads, 0, 'destination checks also obey the platform cooldown after reload');
+    assert.equal(f.stats.reads, 2, 'official destination checks must not inherit the catalog cooldown');
     assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
-    assert.match(await f.page.locator('#progress-title').innerText(), /YouTube limitou as chamadas.*aguardando/);
+    assert.match(await f.page.locator('#progress-title').innerText(), /YouTube Music.*limitou as chamadas.*aguardando/);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
 
-test('normal YouTube operations are paced instead of sending a burst per track', async () => {
+test('normal public searches and official writes use separate platform reservations', async () => {
   const f = await fixture();
   try {
     await f.start();
-    assert.ok(f.stats.searchTimes[1] - f.stats.searchTimes[0] >= 4000,
-      'search, write and the next search must each reserve a platform slot');
+    assert.ok(f.stats.writeTimes[1] - f.stats.writeTimes[0] >= 2000,
+      'official writes must continue reserving their own platform slots');
+    assert.ok(f.stats.searchRoutes.every(route => route === '/api/youtube/music/search'));
     assert.equal((await f.history())[0].status, 'completed');
     assert.equal(f.stats.writes.length, 2);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('three failed public searches preserve a manual link choice across reload and reconcile its write', async () => {
+  const f = await fixture();
+  const videoId = 'Manual12345';
+  try {
+    f.stats.failSearch = true;
+    await f.start();
+    let record = (await f.history())[0];
+    assert.equal(f.stats.searches.filter(query => query.includes('Tempestade')).length, 3);
+    assert.equal(record.status, 'interrupted');
+    assert.equal(record.skipped, 1);
+    assert.equal(record.pending, 1);
+    assert.equal(record.pendingItems[0].source.name, 'Tempestade');
+    assert.equal(record.pendingItems[0].searchFailed, true);
+    assert.equal(record.processed[record.pendingItems[0].source.id], undefined);
+    await f.page.reload();
+    await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
+    await f.page.locator('#playlist-input').fill(f.sourceId);
+    await f.start();
+    assert.equal(f.stats.creates, 1);
+    assert.equal((await f.history()).length, 1);
+    const card = f.page.locator('.pending-item').filter({hasText: 'Tempestade'});
+    await card.getByLabel('Link da música no YouTube').fill(`https://music.youtube.com/watch?v=${videoId}&si=share`);
+    f.stats.loseWriteResponse = true;
+    await card.getByRole('button', {name: 'Adicionar pelo link', exact: true}).click();
+    await advanceUntil(f, key => JSON.parse(localStorage.getItem(key))[0].pending === 0, key);
+    record = (await f.history())[0];
+    assert.equal(record.skipped, 0);
+    assert.equal(record.processed.SourceTrack2345678901, videoId);
+    assert.equal(f.remote.has(videoId), true);
+    assert.equal(f.stats.writes.flat().filter(id => id === videoId).length, 1);
+    assert.equal(f.stats.writeBodies.at(-1).expectedAccountId, f.stats.accounts.youtube);
+    assert.deepEqual(record.inFlight, []);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('a blocked public catalog is queried once and keeps every remaining track for manual review', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  try {
+    f.stats.searchFailure = {all: true, status: 403, data: {error: 'O YouTube Music pediu verificação de acesso.', code: 'YTMUSIC_BLOCKED', retryable: false,
+      details: {provider: 'youtube-music', operation: 'search', cause: 'catalog-blocked', reason: 'captcha', attempts: 1}}};
+    await f.start();
+    const saved = (await f.history())[0];
+    assert.equal(f.stats.searches.length, 1);
+    assert.equal(saved.pending, tracks.length);
+    assert.deepEqual(saved.pendingItems.map(item => item.source.id), tracks.map(track => track.id));
+    assert.equal(Object.keys(saved.processed).length, 0);
+    assert.equal(f.stats.writes.length, 0);
+    assert.equal(await f.page.getByRole('button', {name: 'Adicionar pelo link', exact: true}).count(), tracks.length);
+    assert.equal(await f.page.getByLabel('Link da música no YouTube').count(), tracks.length);
+    const log = await f.page.locator('#live-log').innerText();
+    assert.equal((log.match(/HTTP 403/g) || []).length, 1, 'a single catalog-wide failure must not produce one error per song');
+    assert.doesNotMatch(log, /Nova tentativa|GOOGLE_403|quotaExceeded/);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('manual choices after a catalog block advance source progress and complete only after the last track', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  try {
+    f.stats.searchFailure = {status: 403, data: {error: 'A busca pública foi bloqueada.', code: 'YTMUSIC_BLOCKED', retryable: false,
+      details: {provider: 'youtube-music', operation: 'search', cause: 'catalog-blocked'}}};
+    await f.start();
+    assert.equal((await f.history())[0].status, 'interrupted');
+    assert.equal(await f.page.locator('#progress-count').innerText(), '1 de 3');
+    assert.equal(await f.page.locator('#progress-percent').innerText(), '33%');
+    for (let i = 1; i < tracks.length; i++) {
+      const card = f.page.locator('.pending-item').filter({hasText: tracks[i].name});
+      await card.getByLabel('Link da música no YouTube').fill(`https://music.youtube.com/watch?v=Manual1234${i}`);
+      await card.getByRole('button', {name: 'Adicionar pelo link', exact: true}).click();
+      await advanceUntil(f, ({key, pending}) => JSON.parse(localStorage.getItem(key))[0].pending === pending, {key, pending: tracks.length - i - 1});
+      assert.equal(await f.page.locator('#progress-count').innerText(), `${i + 1} de 3`);
+      assert.equal(await f.page.locator('#progress-percent').innerText(), i === 1 ? '67%' : '100%');
+      assert.equal((await f.history())[0].status, i === 1 ? 'interrupted' : 'completed');
+    }
+    assert.equal(await f.page.locator('#progress-title').innerText(), 'Migração processada');
+    assert.equal((await f.history())[0].skipped, 0);
+    assert.equal(f.stats.creates, 1);
+    assert.equal(f.remote.size, 3);
+    assert.equal(f.stats.searches.length, 2);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('manual resolution after an unconfirmed POST preserves interrupted status while other sources remain unresolved', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  try {
+    f.stats.pendingSearch = true;
+    f.stats.dropWrite = true;
+    await f.start();
+    const saved = (await f.history())[0];
+    assert.equal(saved.status, 'interrupted');
+    assert.equal(saved.pending, 1);
+    assert.equal(saved.inFlight.length, 1);
+    assert.equal(saved.processed[tracks[1].id], undefined);
+    assert.equal(saved.processed[tracks[2].id], undefined);
+    const card = f.page.locator('.pending-item').filter({hasText: 'Horizonte'});
+    await card.getByLabel('Link da música no YouTube').fill('https://youtube.com/watch?v=Manual12340');
+    await card.getByRole('button', {name: 'Adicionar pelo link', exact: true}).click();
+    await advanceUntil(f, key => JSON.parse(localStorage.getItem(key))[0].pending === 0, key);
+    const after = (await f.history())[0];
+    assert.equal(after.status, 'interrupted');
+    assert.equal(after.processed[tracks[0].id], 'Manual12340');
+    assert.equal(after.processed[tracks[1].id], undefined);
+    assert.equal(after.processed[tracks[2].id], undefined);
+    assert.notEqual(await f.page.locator('#progress-percent').innerText(), '100%');
+    assert.notEqual(await f.page.locator('#progress-title').innerText(), 'Migração processada');
+    assert.equal(f.stats.creates, 1);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('manual resolution after cancellation preserves cancelled status and leaves untouched sources resumable', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  let release;
+  try {
+    f.stats.pendingSearch = true;
+    f.stats.searchGateQuery = 'Tempestade';
+    f.stats.searchGate = new Promise(resolve => release = resolve);
+    await f.page.locator('#start-migration').click();
+    await advanceUntil(f, () => document.querySelector('#live-log').textContent.includes('[2/3] Procurando: Tempestade'));
+    await f.page.locator('#cancel-migration').click();
+    release();
+    await advanceUntil(f, () => !document.querySelector('#start-migration').disabled);
+    assert.equal((await f.history())[0].status, 'cancelled');
+    assert.equal((await f.history())[0].pending, 1);
+    const card = f.page.locator('.pending-item').filter({hasText: 'Horizonte'});
+    await card.getByLabel('Link da música no YouTube').fill('https://youtu.be/Manual12340');
+    await card.getByRole('button', {name: 'Adicionar pelo link', exact: true}).click();
+    await advanceUntil(f, key => JSON.parse(localStorage.getItem(key))[0].pending === 0, key);
+    const saved = (await f.history())[0];
+    assert.equal(saved.status, 'cancelled');
+    assert.equal(saved.processed[tracks[0].id], 'Manual12340');
+    assert.equal(saved.processed[tracks[1].id], undefined);
+    assert.equal(saved.processed[tracks[2].id], undefined);
+    assert.notEqual(await f.page.locator('#progress-percent').innerText(), '100%');
+    assert.equal(await f.page.locator('#progress-title').innerText(), 'Migração cancelada');
+    assert.equal(f.stats.writes.length, 1);
+    assert.equal(f.stats.creates, 1);
+    assert.deepEqual(f.errors, []);
+  } finally {release?.(); await f.context.close();}
+});
+
+test('empty successful catalog results keep a manual choice without counting a failed track', async () => {
+  const f = await fixture('spotify-youtube', {tracks: [{id: 'SourceTrack1234567890', name: 'Horizonte', artists: ['Artista'], duration: 180}]});
+  try {
+    f.stats.emptySearch = true;
+    await f.start();
+    const saved = (await f.history())[0];
+    assert.equal(f.stats.searches.length, 2, 'primary and targeted fallback may each run once');
+    assert.equal(saved.pending, 1);
+    assert.equal(saved.pendingItems[0].searchFailed, false);
+    assert.equal(saved.skipped, 0);
+    assert.equal(saved.status, 'completed');
+    assert.equal(f.stats.writes.length, 0);
+    const card = f.page.locator('.pending-item');
+    assert.equal(await card.getByRole('button', {name: 'Adicionar pelo link', exact: true}).count(), 1);
+    assert.equal(await card.getByRole('button', {name: 'Ignorar esta faixa', exact: true}).count(), 1);
+    const search = card.getByRole('link', {name: 'Buscar no YouTube Music', exact: true});
+    const href = new URL(await search.getAttribute('href'));
+    assert.equal(href.origin, 'https://music.youtube.com');
+    assert.equal(href.pathname, '/search');
+    assert.match(href.searchParams.get('q'), /Artista/);
+    assert.match(href.searchParams.get('q'), /Horizonte/);
+    await f.context.route('https://music.youtube.com/search?*', route => route.fulfill({contentType: 'text/html', body: '<title>Music search fixture</title>'}));
+    const popupPromise = f.page.waitForEvent('popup');
+    await search.click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState('domcontentloaded');
+    assert.equal(popup.url(), href.toString());
+    assert.equal(f.stats.searches.length, 2, 'opening a manual catalog link must not spend an API search');
+    assert.doesNotMatch(await f.page.locator('#live-log').innerText(), /Falha ao buscar|busca não foi concluída|HTTP 4|HTTP 5/i);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('a changed catalog response format stops after one call and preserves manual choices without alleging a block', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  try {
+    f.stats.searchFailure = {all: true, status: 502, data: {error: 'O formato de resposta do YouTube Music mudou.', code: 'YOUTUBE_MUSIC_FORMAT_CHANGED', retryable: false,
+      details: {provider: 'youtube-music', operation: 'search', cause: 'format', attempts: 1}}};
+    await f.start();
+    const saved = (await f.history())[0];
+    assert.equal(f.stats.searches.length, 1);
+    assert.equal(saved.pending, tracks.length);
+    assert.deepEqual(saved.pendingItems.map(item => item.source.id), tracks.map(track => track.id));
+    assert.equal(f.stats.writes.length, 0);
+    const log = await f.page.locator('#live-log').innerText();
+    assert.match(log, /formato.*mudou/i);
+    assert.doesNotMatch(log, /captcha|bloqueou|verificação de acesso|Nova tentativa/i);
+    assert.equal(await f.page.getByRole('button', {name: 'Adicionar pelo link', exact: true}).count(), tracks.length);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('manual link validation rejects hostile URLs and its official write ignores the public rate cooldown', async () => {
+  const f = await fixture();
+  const videoId = 'Manual12345';
+  try {
+    f.stats.searchFailure = rateFailure();
+    await f.start();
+    const card = f.page.locator('.pending-item').filter({hasText: 'Tempestade'});
+    const input = card.getByLabel('Link da música no YouTube');
+    const submit = card.getByRole('button', {name: 'Adicionar pelo link', exact: true});
+    const before = f.stats.writes.length;
+    for (const bad of [
+      `https://youtube.com.evil.test/watch?v=${videoId}`,
+      `https://youtube.com@evil.test/watch?v=${videoId}`,
+      `https://evil.test/?url=https://youtube.com/watch?v=${videoId}`,
+      'https://music.youtube.com/playlist?list=PL123456789012345',
+      'javascript:alert(1)',
+      'https://www.youtube.com/watch?v=short'
+    ]) {
+      await input.fill(bad);
+      await submit.click();
+      assert.equal(f.stats.writes.length, before);
+      assert.equal((await f.history())[0].pending, 1);
+    }
+    await input.fill(`https://youtu.be/${videoId}?si=share`);
+    await submit.click();
+    await advanceUntil(f, key => JSON.parse(localStorage.getItem(key))[0].pending === 0, key);
+    assert.equal(f.stats.writeBodies.at(-1).videoId, videoId);
+    assert.equal(f.stats.writeBodies.at(-1).expectedAccountId, f.stats.accounts.youtube);
+    assert.ok(f.stats.writeTimes.at(-1) - f.stats.searchTimes.at(-1) < 15000,
+      'a manual official write must not wait for the public catalog cooldown');
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('manual links accept YouTube watch, YouTube Music watch and youtu.be without extra searches', async () => {
+  const tracks = ['Horizonte', 'Tempestade', 'Aurora'].map((name, i) => ({id: `SourceTrack12345678${i}`, name, artists: ['Artista'], duration: 180}));
+  const f = await fixture('spotify-youtube', {tracks});
+  const videos = ['Manual12340', 'Manual12341', 'Manual12342'];
+  const links = [`https://youtube.com/watch?v=${videos[0]}`, `https://music.youtube.com/watch?v=${videos[1]}`, `https://youtu.be/${videos[2]}`];
+  try {
+    f.stats.searchFailure = {all: true, status: 403, data: {error: 'A busca pública foi bloqueada.', code: 'YTMUSIC_BLOCKED', retryable: false,
+      details: {provider: 'youtube-music', operation: 'search', cause: 'catalog-blocked'}}};
+    await f.start();
+    for (let i = 0; i < links.length; i++) {
+      const card = f.page.locator('.pending-item').filter({hasText: tracks[i].name});
+      await card.getByLabel('Link da música no YouTube').fill(links[i]);
+      await card.getByRole('button', {name: 'Adicionar pelo link', exact: true}).click();
+      await advanceUntil(f, ({key, pending}) => JSON.parse(localStorage.getItem(key))[0].pending === pending, {key, pending: links.length - i - 1});
+    }
+    assert.equal(f.stats.searches.length, 1);
+    assert.deepEqual(f.stats.writes.flat(), videos);
+    assert.equal(f.stats.creates, 1);
+    assert.equal((await f.history())[0].pending, 0);
+    assert.equal((await f.history())[0].skipped, 0);
+    assert.deepEqual(f.errors, []);
+  } finally {await f.context.close();}
+});
+
+test('the public music engine ignores cached results from the retired official YouTube search', async () => {
+  const f = await fixture();
+  try {
+    await f.page.evaluate(({candidates, tracks}) => {
+      const entries = {};
+      for (const [i, track] of tracks.entries()) {
+        entries[`youtube:artista ${track}`] = {items: [{...candidates[i], id: 'Wrong123456'}], savedAt: Date.now(), expiresAt: Date.now() + 21600000};
+      }
+      sessionStorage.setItem('rhyft.web.search-cache.v1', JSON.stringify(entries));
+    }, {candidates: f.candidates, tracks: ['Horizonte', 'Tempestade']});
+    await f.start();
+    assert.equal(f.stats.searches.length, 2);
+    assert.ok(f.stats.searchRoutes.every(route => route === '/api/youtube/music/search'));
+    assert.deepEqual(f.stats.writes.flat(), f.candidates.map(candidate => candidate.id));
+    assert.equal(f.remote.has('Wrong123456'), false);
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
@@ -427,12 +722,12 @@ test('a saved search can repair a missing target track without spending another 
   try {
     await f.start();
     f.remote.delete(f.candidates[1].id);
-    f.stats.searchFailure = {status: 403, data: {error: 'Cota esgotada', code: 'GOOGLE_403', retryable: false, details: {cause: 'quota', reason: 'quotaExceeded'}}};
+    f.stats.searchFailure = {status: 403, data: {error: 'O catálogo bloqueou a busca.', code: 'YTMUSIC_BLOCKED', retryable: false, details: {provider: 'youtube-music', operation: 'search', cause: 'catalog-blocked'}}};
     await f.page.reload();
     await f.page.waitForFunction(() => document.querySelector('#spotify-status').textContent === 'Conectado');
     await f.page.locator('#playlist-input').fill(f.sourceId);
     await f.start();
-    assert.equal(f.stats.searches.length, 2, 'the quota-limited search endpoint should not be called again');
+    assert.equal(f.stats.searches.length, 2, 'the blocked public search endpoint should not be called again');
     assert.equal(f.remote.size, 2);
     assert.equal((await f.history())[0].status, 'completed');
     assert.deepEqual(f.errors, []);
@@ -443,25 +738,26 @@ test('disconnecting YouTube clears its cached search results', async () => {
   const f = await fixture();
   try {
     await f.start();
-    assert.ok(await f.page.evaluate(() => Object.keys(JSON.parse(sessionStorage.getItem('rhyft.web.search-cache.v1'))).length));
+    assert.ok(await f.page.evaluate(() => Object.keys(JSON.parse(sessionStorage.getItem('rhyft.web.search-cache.v2'))).length));
     await f.page.locator('#youtube-logout').click();
     await f.page.waitForFunction(() => document.querySelector('#youtube-status').textContent === 'Não conectado');
-    assert.deepEqual(await f.page.evaluate(() => JSON.parse(sessionStorage.getItem('rhyft.web.search-cache.v1'))), {});
+    assert.deepEqual(await f.page.evaluate(() => JSON.parse(sessionStorage.getItem('rhyft.web.search-cache.v2'))), {});
     assert.deepEqual(f.errors, []);
   } finally {await f.context.close();}
 });
 
-test('a quota error reports its reason and stops without retrying or skipping the track', async () => {
+test('an official Google write quota error still stops without retrying or skipping the track', async () => {
   const f = await fixture();
   try {
-    f.stats.searchFailure = {status: 403, data: {error: 'A cota do YouTube para este projeto foi atingida.', code: 'GOOGLE_403', retryable: false,
-      details: {provider: 'youtube', operation: 'search', cause: 'http', reason: 'quotaExceeded', attempts: 1}}};
+    f.stats.writeFailure = {status: 403, data: {error: 'A cota do YouTube para este projeto foi atingida.', code: 'GOOGLE_403', retryable: false,
+      details: {provider: 'youtube', operation: 'playlist-add', cause: 'quota', reason: 'quotaExceeded', attempts: 1}}};
     await f.start();
     assert.equal((await f.history())[0].status, 'interrupted');
     assert.equal((await f.history())[0].skipped, 0);
-    assert.equal(f.stats.searches.filter(q => q.includes('Tempestade')).length, 1);
+    assert.equal(f.stats.searches.length, 1);
+    assert.equal(f.stats.writes.length, 1);
     const log = await f.page.locator('#live-log').innerText();
-    assert.match(log, /Falha ao buscar a música.*cota/);
+    assert.match(log, /Falha ao adicionar à playlist.*cota/);
     assert.match(log, /HTTP 403.*GOOGLE_403.*quotaExceeded/);
     assert.doesNotMatch(log, /Nova tentativa/);
     assert.deepEqual(f.errors, []);
@@ -471,8 +767,8 @@ test('a quota error reports its reason and stops without retrying or skipping th
 test('a provider explanation accompanying an abort is kept in the visible log', async () => {
   const f = await fixture();
   try {
-    f.stats.searchFailure = {status: 409, data: {error: 'O YouTube interrompeu a operação. Detalhe informado: The operation was aborted because the resource changed.', code: 'GOOGLE_409', retryable: true,
-      details: {provider: 'youtube', operation: 'search', cause: 'aborted', reason: 'ABORTED', attempts: 2}}};
+    f.stats.searchFailure = {status: 409, data: {error: 'O YouTube Music interrompeu a busca. Detalhe informado: The operation was aborted because the resource changed.', code: 'YTMUSIC_409', retryable: true,
+      details: {provider: 'youtube-music', operation: 'search', cause: 'aborted', reason: 'ABORTED', attempts: 1}}};
     await f.start();
     const log = await f.page.locator('#live-log').innerText();
     assert.match(log, /resource changed/);
@@ -502,7 +798,7 @@ test('a browser response-body abort is distinguished from an invalid response or
     await f.page.evaluate(() => {
       const realFetch = window.fetch;
       window.fetch = async (url, ...args) => {
-        if (String(url).includes('/youtube/search')) return {ok: true, status: 200, json: async () => {throw new DOMException('The operation was aborted.', 'AbortError');}};
+        if (String(url).includes('/youtube/music/search')) return {ok: true, status: 200, json: async () => {throw new DOMException('The operation was aborted.', 'AbortError');}};
         return realFetch(url, ...args);
       };
     });
@@ -817,14 +1113,15 @@ test('cancel during a search prevents the next write and preserves the destinati
 });
 
 
-test('rechecks a previously uncertain Last Fall match without another search or manual click', async () => {
+test('a legacy official Last Fall result is rechecked through the public catalog before adding', async () => {
   const track = {id: 'SourceTrack1234567890', name: 'Last Fall', artists: ['Lil Peep', 'Lil Tracy', 'Horse Head'], duration: 180};
   const candidate = {id: 'Music123450', title: 'Lil Peep w/ Lil Tracy & Horse Head - Last Fall (Official Audio)', channel: 'Lil Peep', duration: 182};
   const f = await fixture('spotify-youtube', {tracks: [track], candidates: [candidate], legacyPending: true});
   try {
     await f.start();
     assert.equal(f.stats.creates, 0);
-    assert.equal(f.stats.searches.length, 0);
+    assert.equal(f.stats.searches.length, 1);
+    assert.deepEqual(f.stats.searchRoutes, ['/api/youtube/music/search']);
     assert.deepEqual(f.stats.writes.flat(), [candidate.id]);
     assert.equal((await f.history())[0].pending, 0);
     assert.deepEqual((await f.history())[0].pendingItems, []);

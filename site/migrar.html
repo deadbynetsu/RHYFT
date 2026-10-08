@@ -7,15 +7,15 @@
   <meta name="description" content="Migre playlists entre Spotify e YouTube Music diretamente pelo navegador.">
   <meta name="theme-color" content="#0B0C12">
   <link rel="icon" href="/brand.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=2">
   <link rel="stylesheet" href="/history.css">
   <link rel="stylesheet" href="/spotify-setup.css?v=2">
   <script src="/migration-store.js?v=2" defer></script>
   <script src="/music-matching.js" defer></script>
   <script src="/spotify-setup.js?v=2" defer></script>
-  <script src="/provider-pacing.js?v=1" defer></script>
-  <script src="/search-cache.js?v=1" defer></script>
-  <script src="/migrar.js?v=7" defer></script>
+  <script src="/provider-pacing.js?v=2" defer></script>
+  <script src="/search-cache.js?v=2" defer></script>
+  <script src="/migrar.js?v=8" defer></script>
   <script src="/history.js?v=2" defer></script>
 </head>
 <body class="migrate-page">
@@ -149,7 +149,7 @@
     </section>
 
     <section class="pending-panel" id="pending-panel" hidden>
-      <div class="section-heading left"><div class="eyebrow">PRECISA DA SUA ESCOLHA</div><h2 id="pending-title">Faixas para revisar</h2><p>Confira o título, o artista e a duração. Você pode ouvir cada opção antes de escolher; as faixas resolvidas saem desta lista.</p></div>
+      <div class="section-heading left"><div class="eyebrow">PRECISA DA SUA ESCOLHA</div><h2 id="pending-title">Faixas para revisar</h2><p>Confira o título, o artista e a duração. Ouça as opções antes de escolher. Se a busca no YouTube falhar, você também pode colar o link da música; as faixas resolvidas saem desta lista.</p></div>
       <div id="pending-list" class="pending-list"></div>
     </section>
 
@@ -157,7 +157,7 @@
       <div class="result-icon">♪</div><div><small>PLAYLIST DE DESTINO</small><h2 id="result-title">Playlist criada</h2><p id="result-summary"></p></div><a class="btn btn-primary" id="result-link" href="#" target="_blank" rel="noreferrer">Abrir playlist</a>
     </section>
 
-    <aside class="quota-note"><strong>Sobre limites das plataformas</strong><p>A migração Web usa as APIs oficiais. Google e Spotify aplicam cotas e limites de uso; se uma cota for atingida, o app informa o motivo e você pode tentar mais tarde. As versões Windows e Android continuam disponíveis como alternativa.</p></aside>
+    <aside class="quota-note"><strong>Busca e acesso às suas playlists</strong><p>As músicas são buscadas no catálogo público do YouTube Music. A conexão com o Google permite ler e modificar suas playlists pela API oficial. A busca pública e as operações de conta têm seus próprios limites; o progresso fica salvo neste navegador para você retomar.</p></aside>
   </main>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

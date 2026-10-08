@@ -1,11 +1,19 @@
 const crypto = require('crypto');
+const { createClient: createMusicClient, MusicSearchError } = require('./lib/youtube-music');
 
 const SPOTIFY_API = 'https://api.spotify.com/v1';
 const SPOTIFY_ACCOUNTS = 'https://accounts.spotify.com';
 const GOOGLE_ACCOUNTS = 'https://accounts.google.com';
 const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 const YOUTUBE_API = 'https://www.googleapis.com/youtube/v3';
+// Public music catalogue results contain no account-specific data. This cache
+// belongs to a warm function instance, not a database or a global quota pool.
 const youtubeSearchCache = new Map();
+const youtubeSearchInFlight = new Map();
+const musicClient = createMusicClient({
+  fetch: (...args) => fetch(...args), now: () => Date.now(), timeoutMs: 7000,
+  setTimeout: (...args) => setTimeout(...args), clearTimeout: timer => clearTimeout(timer)
+});
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/youtube';
 const SPOTIFY_SCOPE = [
   'playlist-read-private',
@@ -617,32 +625,30 @@ async function youtubePlaylistRoute(event) {
 }
 
 async function youtubeSearchRoute(event) {
-  const auth = await googleAuth(event); const q = String(event.queryStringParameters?.q || '').trim().slice(0, 180);
+  const q = String(event.queryStringParameters?.q || '').trim().slice(0, 180);
   if (!q) throw new HttpError(400, 'Busca vazia.', 'BAD_QUERY');
-  // Isolate cached data by account/session, using a digest rather than a token.
-  const account = crypto.createHash('sha256').update(auth.session.refresh_token || auth.accessToken).digest('hex');
-  const cacheKey = `${account}:${q.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')}`;
+  const filter = event.queryStringParameters?.filter || 'songs';
+  if (!['songs', 'videos'].includes(filter)) throw new HttpError(400, 'Filtro de busca inválido.', 'BAD_FILTER');
+  const cacheKey = `${filter}:${q.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ')}`;
   for (const [key, value] of youtubeSearchCache) if (value.expiresAt <= Date.now()) youtubeSearchCache.delete(key);
-  let cached = youtubeSearchCache.get(cacheKey);
-  if (cached?.items) return json(200, {items: cached.items}, auth.setCookies);
-  if (!cached) {
-    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', q });
-    const search = await providerFetch(`${YOUTUBE_API}/search?${params}`, { headers: bearer(auth.accessToken) }, 'google');
-    cached = {ids: (search.items || []).map(x => x.id?.videoId).filter(Boolean), expiresAt: Date.now() + 900000};
-    if (!cached.ids.length) cached.items = [];
-    // Keep the expensive search even if the following metadata call fails.
-    youtubeSearchCache.set(cacheKey, cached);
-    if (youtubeSearchCache.size > 100) youtubeSearchCache.delete(youtubeSearchCache.keys().next().value);
-    if (!cached.ids.length) return json(200, {items: []}, auth.setCookies);
-    // A browser search makes two upstream calls; avoid a burst between them.
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  const cached = youtubeSearchCache.get(cacheKey);
+  if (cached) return json(200, cached.result);
+  let pending = youtubeSearchInFlight.get(cacheKey);
+  if (!pending) {
+    pending = (async () => {
+      let found = await musicClient.search(q, {filter, limit: 10});
+      // Unpublished/live recordings sometimes exist only in the video catalogue.
+      // This fallback remains anonymous; it never calls Data API search.list.
+      if (filter === 'songs' && !found.items.length) found = await musicClient.search(q, {filter: 'videos', limit: 10});
+      const result = { items: found.items, source: 'youtube-music-public', filter: found.filter };
+      youtubeSearchCache.set(cacheKey, {result, expiresAt: Date.now() + (found.items.length ? 900000 : 300000)});
+      if (youtubeSearchCache.size > 100) youtubeSearchCache.delete(youtubeSearchCache.keys().next().value);
+      return result;
+    })();
+    youtubeSearchInFlight.set(cacheKey, pending);
   }
-  const ids = cached.ids;
-  const details = await providerFetch(`${YOUTUBE_API}/videos?part=snippet,contentDetails&id=${encodeURIComponent(ids.join(','))}`, { headers: bearer(auth.accessToken) }, 'google');
-  const map = new Map((details.items || []).map(v => [v.id, v]));
-  const items = ids.map(id => map.get(id)).filter(Boolean).map(v => ({ id: v.id, title: v.snippet?.title || '', channel: v.snippet?.channelTitle || '', duration: parseDuration(v.contentDetails?.duration), url: `https://www.youtube.com/watch?v=${v.id}` }));
-  cached.items = items;
-  return json(200, { items }, auth.setCookies);
+  try { return json(200, await pending); }
+  finally { if (youtubeSearchInFlight.get(cacheKey) === pending) youtubeSearchInFlight.delete(cacheKey); }
 }
 
 async function youtubeCreateRoute(event) {
@@ -732,15 +738,17 @@ exports.handler = async (event) => {
     if (route === 'spotify/playlist/items' && method === 'POST') return await spotifyAddItemsRoute(event);
     if (route === 'youtube/playlist' && method === 'GET') return await youtubePlaylistRoute(event);
     if (route === 'youtube/playlist/state' && method === 'GET') return await destinationStateRoute(event, 'youtube');
-    if (route === 'youtube/search' && method === 'GET') return await youtubeSearchRoute(event);
+    // Keep the old route as an alias for cached clients after deployment.
+    if (['youtube/search', 'youtube/music/search'].includes(route) && method === 'GET') return await youtubeSearchRoute(event);
     if (route === 'youtube/playlist' && method === 'POST') return await youtubeCreateRoute(event);
     if (route === 'youtube/playlist/item' && method === 'POST') return await youtubeAddItemRoute(event);
     return json(404, { error: 'Endpoint não encontrado.', code: 'NOT_FOUND' });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 500;
-    const message = error instanceof HttpError ? error.message : 'O servidor encontrou um erro inesperado.';
-    if (!(error instanceof HttpError)) console.error(error);
+    const known = error instanceof HttpError || error instanceof MusicSearchError;
+    const status = known ? error.status : 500;
+    const message = known ? error.message : 'O servidor encontrou um erro inesperado.';
+    if (!known) console.error(error);
     return json(status, { error: message, code: error.code || 'INTERNAL_ERROR',
-      ...(error instanceof HttpError ? { details: error.details, retryable: error.retryable } : {}) });
+      ...(known ? { details: error.details, retryable: error.retryable } : {}) });
   }
 };

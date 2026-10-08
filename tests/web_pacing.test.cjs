@@ -68,3 +68,23 @@ test('Retry-After periods longer than the fallback are respected', () => {
   f.advance(120000);
   assert.equal(f.pacing.remaining('youtube', f.now()).ms, 180000);
 });
+
+test('public YouTube Music catalog calls are paced separately from official writes', () => {
+  const f = fixture();
+  f.pacing.limited('youtube', 300000);
+  assert.equal(f.pacing.reserve('youtube-music'), f.now());
+  assert.equal(f.pacing.reserve('youtube-music'), f.now() + 1000);
+  assert.equal(f.pacing.remaining('youtube-music', f.now()).blocked, false);
+  assert.equal(f.pacing.reserve('youtube'), f.now() + 300000);
+});
+
+test('public catalog limits do not delay official writes and persist across reload', () => {
+  const f = fixture();
+  assert.equal(f.pacing.limited('youtube-music'), 15000);
+  assert.equal(f.pacing.reserve('youtube'), f.now());
+  f.advance(15000);
+  assert.equal(f.reload().limited('youtube-music'), 30000);
+  f.advance(30000);
+  assert.equal(f.reload().limited('youtube-music', 90000), 90000);
+  assert.equal(f.pacing.reserve('youtube'), f.now());
+});

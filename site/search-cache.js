@@ -3,8 +3,9 @@
   if (typeof module === 'object' && module.exports) module.exports = cache;
   else root.RhyftSearchCache = cache;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const KEY = 'rhyft.web.search-cache.v1';
-  const providers = ['youtube', 'spotify'];
+  const KEY = 'rhyft.web.search-cache.v2';
+  const providers = ['youtube-music', 'spotify'];
+  const PUBLIC_SOURCE = 'youtube-music-public';
   function create({storage, now = Date.now} = {}) {
     let memory = {};
     function read() {
@@ -20,19 +21,22 @@
     function get(provider, query) {
       if (!providers.includes(provider)) return null;
       const value = read()[key(provider, query)];
-      return value && Number.isFinite(value.expiresAt) && value.expiresAt > now() && Array.isArray(value.items) ? {items: value.items} : null;
+      if (!value || !Number.isFinite(value.expiresAt) || value.expiresAt <= now() || !Array.isArray(value.items)) return null;
+      if (provider === 'youtube-music' && value.source !== PUBLIC_SOURCE) return null;
+      return {items: value.items, ...(value.source ? {source: value.source} : {})};
     }
     function set(provider, query, response) {
       if (!providers.includes(provider) || !Array.isArray(response?.items)) return;
+      if (provider === 'youtube-music' && response.source !== PUBLIC_SOURCE) return;
       read();
       const items = response.items.slice(0, 10).filter(item => item && typeof item.id === 'string').map(item => {
         const clean = {id: item.id.slice(0, 100)};
-        for (const field of ['title', 'name', 'channel', 'uri', 'url']) if (typeof item[field] === 'string') clean[field] = item[field].slice(0, 500);
+        for (const field of ['title', 'name', 'channel', 'uri', 'url', 'isrc', 'catalogSource']) if (typeof item[field] === 'string') clean[field] = item[field].slice(0, 500);
         if (Array.isArray(item.artists)) clean.artists = item.artists.filter(artist => typeof artist === 'string').slice(0, 10).map(artist => artist.slice(0, 200));
         if (Number.isFinite(item.duration) && item.duration > 0) clean.duration = item.duration;
         return clean;
       });
-      memory[key(provider, query)] = {items, savedAt: now(), expiresAt: now() + (items.length ? 21600000 : 300000)};
+      memory[key(provider, query)] = {items, ...(provider === 'youtube-music' ? {source: PUBLIC_SOURCE} : {}), savedAt: now(), expiresAt: now() + (items.length ? 21600000 : 300000)};
       const keys = Object.keys(memory).sort((a, b) => memory[b].savedAt - memory[a].savedAt);
       for (const key of keys.slice(100)) delete memory[key];
       write();

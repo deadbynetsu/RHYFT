@@ -4,18 +4,60 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const {createRequire} = require('node:module');
+const apiPath = path.join(__dirname, '../netlify/functions/api.js');
+const apiRequire = createRequire(apiPath);
 
 function backend(fetch, env = {}, runtime = {}) {
+  const publicBootstrapRequests = [];
+  const musicFetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'music.youtube.com' && parsed.pathname === '/' && (options.method || 'GET') === 'GET') {
+      publicBootstrapRequests.push({url, options});
+      const headers = Object.fromEntries(Object.entries(options.headers || {}).map(([name, value]) => [name.toLowerCase(), value]));
+      assert.equal(headers.authorization, undefined);
+      assert.equal(headers.cookie, undefined);
+      assert.equal(parsed.searchParams.has('key'), false);
+      return new Response('<html><script>ytcfg.set({"VISITOR_DATA":"anonymous-test-visitor"});</script></html>',
+        {status: 200, headers: {'Content-Type': 'text/html'}});
+    }
+    return fetch(url, options);
+  };
+  const runtimeRequire = name => {
+    const dependency = apiRequire(name);
+    if (/^\.\/lib\/youtube-music(?:\.js)?$/.test(name)) return {...dependency,
+      createClient: options => dependency.createClient({...options, fetch: musicFetch,
+        now: () => (runtime.Date || Date).now(), setTimeout: runtime.setTimeout || setTimeout,
+        clearTimeout: runtime.clearTimeout || clearTimeout})};
+    return dependency;
+  };
   const context = vm.createContext({
-    require, exports: {}, fetch, AbortController, URL, URLSearchParams, Buffer, console,
+    require: runtimeRequire, exports: {}, fetch, AbortController, URL, URLSearchParams, Buffer, console,
     setTimeout, clearTimeout, process: { env: { SESSION_SECRET: crypto.randomBytes(32).toString('hex'), ...env } }, ...runtime
   });
-  const code = fs.readFileSync(path.join(__dirname, '../netlify/functions/api.js'), 'utf8');
+  const code = fs.readFileSync(apiPath, 'utf8');
   vm.runInContext(`${code}\nexports.testing = {providerFetch, seal, unseal, refreshSpotify, refreshGoogle};`, context);
+  context.exports.testing.publicBootstrapRequests = publicBootstrapRequests;
   return context.exports;
 }
 function response(status, body) {
   return new Response(JSON.stringify(body), { status, headers: {'Content-Type': 'application/json'} });
+}
+function musicResults(ids = ['Video123450'], {filter = 'songs', title = 'Song', artist = 'Artist', duration = '3:02'} = {}) {
+  const musicVideoType = filter === 'songs' ? 'MUSIC_VIDEO_TYPE_ATV' : 'MUSIC_VIDEO_TYPE_OMV';
+  const contents = ids.map(id => ({musicResponsiveListItemRenderer: {
+    playlistItemData: {videoId: id},
+    flexColumns: [
+      {musicResponsiveListItemFlexColumnRenderer: {text: {runs: [{text: title, navigationEndpoint: {watchEndpoint: {videoId: id,
+        watchEndpointMusicSupportedConfigs: {watchEndpointMusicConfig: {musicVideoType}}}}}]}}},
+      {musicResponsiveListItemFlexColumnRenderer: {text: {runs: [{text: artist, navigationEndpoint: {browseEndpoint: {
+        browseId: 'UCArtistFixture', browseEndpointContextSupportedConfigs: {browseEndpointContextMusicConfig: {pageType: 'MUSIC_PAGE_TYPE_ARTIST'}}}}}]}}}
+    ],
+    fixedColumns: [{musicResponsiveListItemFixedColumnRenderer: {text: {runs: [{text: duration}]}}}]
+  }}));
+  return {contents: {tabbedSearchResultsRenderer: {tabs: [{tabRenderer: {content: {sectionListRenderer: {
+    contents: [{musicShelfRenderer: {contents}}]
+  }}}}]}}};
 }
 
 for (const failure of ['abort', 'body-abort', 'server']) {
@@ -57,16 +99,16 @@ test('an upstream ABORTED response preserves its reason and operation without in
     calls++;
     return response(409, {error: {message: 'The operation was aborted.', status: 'ABORTED'}});
   });
-  const session = api.testing.seal({access_token: 'private-fixture-token', expires_at: Date.now() + 3600000});
-  const result = await api.handler(event('youtube/search', {q: 'private-query'}, `g_session=${session}`));
-  const data = JSON.parse(result.body);
-  assert.equal(result.statusCode, 409);
+  let failure;
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search?q=private-query',
+    {headers: {Authorization: 'Bearer private-fixture-token'}}, 'google'), error => {failure = error; return true;});
+  assert.equal(failure.status, 409);
   assert.equal(calls, 1);
-  assert.equal(data.code, 'GOOGLE_409');
-  assert.equal(data.retryable, true);
-  assert.deepEqual(data.details, {provider: 'youtube', operation: 'search', method: 'GET', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 1});
-  assert.match(data.error, /interrompeu.*não informou o motivo/);
-  assert.doesNotMatch(result.body, /private-fixture-token|private-query|googleapis\.com|cookie|timeoutMs/);
+  assert.equal(failure.code, 'GOOGLE_409');
+  assert.equal(failure.retryable, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(failure.details)), {provider: 'youtube', operation: 'search', method: 'GET', cause: 'aborted', upstreamStatus: 409, reason: 'ABORTED', attempts: 1});
+  assert.match(failure.message, /interrompeu.*não informou o motivo/);
+  assert.doesNotMatch(JSON.stringify(failure), /private-fixture-token|private-query|googleapis\.com|cookie|timeoutMs/);
 });
 
 test('an abort with a specific provider explanation keeps that explanation', async () => {
@@ -106,17 +148,15 @@ test('a server deadline is reported separately from an unexplained AbortError', 
   assert.equal(calls, 1);
 });
 
-test('video detail failures identify the actual failing call inside a search', async () => {
-  const api = backend(async url => url.includes('/search?')
-    ? response(200, {items: [{id: {videoId: 'Video123456'}}]})
-    : response(503, {error: {message: 'Service unavailable', status: 'UNAVAILABLE'}}));
-  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
-  const result = await api.handler(event('youtube/search', {q: 'Song'}, `g_session=${session}`));
-  const data = JSON.parse(result.body);
-  assert.equal(result.statusCode, 503);
-  assert.equal(data.details.operation, 'track-details');
-  assert.equal(data.details.reason, 'UNAVAILABLE');
-  assert.equal(data.details.attempts, 2);
+test('official YouTube video detail failures retain their operation and bounded retries', async () => {
+  const api = backend(async () => response(503, {error: {message: 'Service unavailable', status: 'UNAVAILABLE'}}));
+  await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/videos?part=contentDetails', {}, 'google'), error => {
+    assert.equal(error.status, 503);
+    assert.equal(error.details.operation, 'track-details');
+    assert.equal(error.details.reason, 'UNAVAILABLE');
+    assert.equal(error.details.attempts, 2);
+    return true;
+  });
 });
 
 test('a non-JSON search failure is returned to the browser without leaking or retrying on the server', async () => {
@@ -201,14 +241,14 @@ for (const scope of ['Day', 'Minute']) {
         metadata: {quota_limit: `QueriesPer${scope}PerProject`, consumer: 'private-project-identifier'}
       }]}});
     });
-    const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
-    const result = await api.handler(event('youtube/search', {q: 'Song'}, `g_session=${session}`));
-    const data = JSON.parse(result.body);
-    assert.equal(data.retryable, scope === 'Minute');
-    assert.equal(data.details.limitScope, scope.toLowerCase());
-    assert.equal(data.details.cause, scope === 'Day' ? 'quota' : 'rate-limit');
-    assert.match(data.error, scope === 'Day' ? /cota.*esgotada/ : /limitou temporariamente/);
-    assert.doesNotMatch(result.body, /private-project-identifier/);
+    await assert.rejects(api.testing.providerFetch('https://www.googleapis.com/youtube/v3/search?q=Song', {}, 'google'), error => {
+      assert.equal(error.retryable, scope === 'Minute');
+      assert.equal(error.details.limitScope, scope.toLowerCase());
+      assert.equal(error.details.cause, scope === 'Day' ? 'quota' : 'rate-limit');
+      assert.match(error.message, scope === 'Day' ? /cota.*esgotada/ : /limitou temporariamente/);
+      assert.doesNotMatch(JSON.stringify(error), /private-project-identifier/);
+      return true;
+    });
     assert.equal(calls, 1);
   });
 }
@@ -254,47 +294,166 @@ test('unknown quota-related reasons are not asserted to be an exhausted quota', 
   });
 });
 
-test('successful YouTube searches are reused in a warm function and isolated by account', async () => {
-  let searches = 0, details = 0;
-  const api = backend(async url => {
-    if (url.includes('/search?')) {searches++; return response(200, {items: [{id: {videoId: 'Video123456'}}]});}
-    details++;
-    return response(200, {items: [{id: 'Video123456', snippet: {title: 'Song', channelTitle: 'Artist'}, contentDetails: {duration: 'PT3M'}}]});
+for (const route of ['youtube/search', 'youtube/music/search']) {
+  test(`${route} searches public music without OAuth credentials, a session secret or private cookies`, async () => {
+    const calls = [];
+    const api = backend(async (url, options) => {
+      calls.push(url);
+      const parsed = new URL(url);
+      assert.equal(parsed.hostname, 'music.youtube.com');
+      assert.equal(parsed.pathname, '/youtubei/v1/search');
+      assert.equal(options.method, 'POST');
+      assert.equal(parsed.searchParams.has('key'), false);
+      const headers = Object.fromEntries(Object.entries(options.headers || {}).map(([name, value]) => [name.toLowerCase(), value]));
+      assert.equal(headers.authorization, undefined);
+      assert.equal(headers.cookie, undefined);
+      if (headers['x-goog-visitor-id']) assert.equal(headers['x-goog-visitor-id'], 'anonymous-test-visitor');
+      assert.doesNotMatch(JSON.stringify(options), /private-google-cookie|private-spotify-cookie|private-bearer|refresh_token|client_secret/);
+      assert.equal(JSON.parse(options.body).query, 'Artist Song');
+      return response(200, musicResults());
+    }, {SESSION_SECRET: '', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: ''});
+    const result = await api.handler({...event(route, {q: 'Artist Song'}, 'g_session=private-google-cookie; sp_session=private-spotify-cookie'),
+      headers: {host: 'rhyft.example.test', cookie: 'g_session=private-google-cookie; sp_session=private-spotify-cookie', authorization: 'Bearer private-bearer'}});
+    assert.equal(result.statusCode, 200);
+    const data = JSON.parse(result.body);
+    assert.equal(data.source, 'youtube-music-public');
+    assert.equal(data.filter, 'songs');
+    assert.equal(data.items[0].id, 'Video123450');
+    assert.equal(data.items[0].title, 'Song');
+    assert.deepEqual(data.items[0].artists, ['Artist']);
+    assert.equal(data.items[0].duration, 182);
+    assert.equal(calls.length, 1, 'public renderer metadata must not cause a videos.list or token request');
+    assert.equal(api.testing.publicBootstrapRequests.length, 1, 'the native-compatible public visitor context is bootstrapped once');
+    assert.equal(result.multiValueHeaders, undefined, 'a public search must not persist OAuth cookies');
+    assert.doesNotMatch(result.body, /private-google-cookie|private-spotify-cookie|private-bearer|googleapis\.com/);
   });
-  const session = api.testing.seal({access_token: 'test-only', refresh_token: 'account-one', expires_at: Date.now() + 3600000});
-  const request = event('youtube/search', {q: 'Artist Song'}, `g_session=${session}`);
-  assert.equal((await api.handler(request)).statusCode, 200);
-  assert.equal((await api.handler({...request, queryStringParameters: {q: 'artist   song'}})).statusCode, 200);
-  assert.equal(searches, 1);
-  assert.equal(details, 1);
-  const other = api.testing.seal({access_token: 'test-two', refresh_token: 'account-two', expires_at: Date.now() + 3600000});
-  assert.equal((await api.handler({...request, headers: {cookie: `g_session=${other}`}})).statusCode, 200);
-  assert.equal(searches, 2);
-});
+}
 
-test('a failed video-details response does not repeat the paid search on retry', async () => {
-  let searches = 0, details = 0;
-  const api = backend(async url => {
-    if (url.includes('/search?')) {searches++; return response(200, {items: [{id: {videoId: 'Video123456'}}]});}
-    if (++details <= 2) return response(503, {error: {message: 'Unavailable'}});
-    return response(200, {items: [{id: 'Video123456', snippet: {title: 'Song'}, contentDetails: {duration: 'PT3M'}}]});
-  });
-  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
-  const request = event('youtube/search', {q: 'Song'}, `g_session=${session}`);
-  assert.equal((await api.handler(request)).statusCode, 503);
-  assert.equal((await api.handler(request)).statusCode, 200);
-  assert.equal(searches, 1);
-  assert.equal(details, 3);
-});
-
-test('a failed search is tried once per server invocation', async () => {
+test('public search aliases share normalized results across anonymous and expired Google sessions', async () => {
   let calls = 0;
-  const api = backend(async () => {calls++; return response(503, {error: {message: 'Unavailable'}});});
-  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
-  const request = event('youtube/search', {q: 'Song'}, `g_session=${session}`);
-  assert.equal((await api.handler(request)).statusCode, 503);
-  assert.equal((await api.handler(request)).statusCode, 503);
+  const api = backend(async url => {
+    calls++;
+    assert.equal(new URL(url).hostname, 'music.youtube.com');
+    return response(200, musicResults());
+  });
+  const stale = api.testing.seal({access_token: 'private-old-access', refresh_token: 'private-old-refresh', expires_at: 0});
+  const first = await api.handler(event('youtube/search', {q: 'Artist Song'}, `g_session=${stale}`));
+  const second = await api.handler(event('youtube/music/search', {q: 'artist   song'}));
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+  assert.deepEqual(JSON.parse(second.body), JSON.parse(first.body));
+  assert.equal(calls, 1, 'the anonymous catalogue must neither refresh expired credentials nor split its cache by account');
+  assert.equal(api.testing.publicBootstrapRequests.length, 1);
+});
+
+test('concurrent public search aliases coalesce the same normalized query', async () => {
+  let calls = 0, release;
+  const gate = new Promise(resolve => {release = resolve;});
+  const api = backend(async () => {calls++; await gate; return response(200, musicResults());});
+  const first = api.handler(event('youtube/search', {q: 'Artist Song'}));
+  const second = api.handler(event('youtube/music/search', {q: 'artist   song'}));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  release();
+  const results = await Promise.all([first, second]);
+  assert.ok(results.every(result => result.statusCode === 200));
+  assert.deepEqual(JSON.parse(results[0].body), JSON.parse(results[1].body));
+  assert.equal(calls, 1);
+});
+
+test('a failed public search is attempted once per invocation and is not cached', async () => {
+  let calls = 0;
+  const api = backend(async () => ++calls === 1 ? response(503, {error: {message: 'Unavailable'}}) : response(200, musicResults()));
+  const request = event('youtube/music/search', {q: 'Artist Song'});
+  const failed = await api.handler(request);
+  const details = JSON.parse(failed.body).details;
+  assert.equal(failed.statusCode, 503);
+  assert.equal(details.provider, 'youtube-music');
+  assert.equal(details.operation, 'search');
+  assert.equal(details.method, 'POST');
+  assert.equal(details.attempts, 1);
+  assert.equal(calls, 1);
+  assert.equal((await api.handler(request)).statusCode, 200);
   assert.equal(calls, 2);
+});
+
+for (const status of [403, 429]) {
+  test(`public catalogue HTTP ${status} retains its own diagnostics without claiming project quota exhaustion`, async () => {
+    let calls = 0;
+    const api = backend(async () => {
+      calls++;
+      return new Response('<html>private-catalogue-details</html>', {status, headers: {'Retry-After': '90'}});
+    });
+    const result = await api.handler(event('youtube/music/search', {q: 'Artist Song'}));
+    const data = JSON.parse(result.body);
+    assert.equal(result.statusCode, status);
+    assert.equal(data.retryable, status === 429);
+    assert.equal(data.details.provider, 'youtube-music');
+    assert.equal(data.details.operation, 'search');
+    assert.equal(data.details.method, 'POST');
+    assert.equal(data.details.cause, status === 429 ? 'rate-limit' : 'catalog-blocked');
+    assert.equal(data.details.upstreamStatus, status);
+    assert.equal(data.details.attempts, 1);
+    if (status === 429) assert.equal(data.details.retryAfterMs, 90000);
+    assert.equal(calls, 1);
+    assert.doesNotMatch(result.body, /private-catalogue-details|quotaExceeded|cota.*esgotada|GOOGLE_429/);
+  });
+}
+
+test('public search cache expires successful and empty results separately and isolates filters', async () => {
+  let now = Date.now(), calls = 0;
+  class Clock extends Date {static now() {return now;}}
+  const api = backend(async (_url, options) => {
+    calls++;
+    const query = JSON.parse(options.body).query;
+    return response(200, musicResults(query === 'Empty' ? [] : ['Video123450']));
+  }, {}, {Date: Clock});
+  const song = event('youtube/music/search', {q: 'Artist Song'});
+  assert.equal((await api.handler(song)).statusCode, 200);
+  now += 14 * 60000;
+  assert.equal((await api.handler(song)).statusCode, 200);
+  assert.equal(calls, 1);
+  now += 2 * 60000;
+  assert.equal((await api.handler(song)).statusCode, 200);
+  assert.equal(calls, 2, 'successful results expire after 15 minutes');
+  assert.equal((await api.handler(event('youtube/music/search', {q: 'Artist Song', filter: 'videos'}))).statusCode, 200);
+  assert.equal(calls, 3, 'songs and videos must have separate cache entries');
+  const empty = event('youtube/music/search', {q: 'Empty', filter: 'videos'});
+  assert.equal((await api.handler(empty)).statusCode, 200);
+  now += 4 * 60000;
+  assert.equal((await api.handler(empty)).statusCode, 200);
+  assert.equal(calls, 4);
+  now += 2 * 60000;
+  assert.equal((await api.handler(empty)).statusCode, 200);
+  assert.equal(calls, 5, 'empty results expire after five minutes instead of suppressing future matches');
+});
+
+test('a public song search falls back once to the video catalogue and caches that result', async () => {
+  const params = [];
+  const api = backend(async (_url, options) => {
+    const body = JSON.parse(options.body); params.push(body.params);
+    return response(200, musicResults(params.length === 1 ? [] : ['Video123450'], {filter: 'videos'}));
+  });
+  const result = await api.handler(event('youtube/music/search', {q: 'Unpublished Song'}));
+  const data = JSON.parse(result.body);
+  assert.equal(result.statusCode, 200);
+  assert.equal(data.source, 'youtube-music-public');
+  assert.equal(data.filter, 'videos');
+  assert.equal(data.items.length, 1);
+  assert.deepEqual(params, ['EgWKAQIIAWoMEA4QChADEAQQCRAF', 'EgWKAQIQAWoMEA4QChADEAQQCRAF']);
+  assert.equal((await api.handler(event('youtube/search', {q: 'Unpublished Song'}))).statusCode, 200);
+  assert.equal(params.length, 2, 'the fallback result must be reused through the legacy alias');
+  assert.equal(api.testing.publicBootstrapRequests.length, 1, 'song and video lookups share one anonymous bootstrap');
+});
+
+test('public search input errors do not contact either catalogue or Google OAuth', async () => {
+  const api = backend(() => {throw new Error('invalid public input must not fetch');}, {SESSION_SECRET: ''});
+  for (const [query, code] of [[{q: ' '}, 'BAD_QUERY'], [{q: 'Song', filter: 'playlists'}, 'BAD_FILTER']]) {
+    const result = await api.handler(event('youtube/music/search', query));
+    assert.equal(result.statusCode, 400);
+    assert.equal(JSON.parse(result.body).code, code);
+  }
+  assert.equal(api.testing.publicBootstrapRequests.length, 0);
 });
 
 test('a refresh connection failure retains authentication context instead of becoming an internal error', async () => {
@@ -355,26 +514,59 @@ test('an inaccessible destination identifies its scope for safe frontend recover
   assert.equal(JSON.parse(result.body).details.upstreamStatus, 200, 'YouTube returned an empty listing, not an upstream HTTP 404');
 });
 
-test('YouTube search requests ten candidates with their recording durations', async () => {
-  const ids = Array.from({length: 10}, (_, i) => `Video12345${i}`);
-  let searchAt;
-  const api = backend(async url => {
-    const parsed = new URL(url);
-    if (parsed.pathname.endsWith('/search')) {
-      searchAt = Date.now();
-      assert.equal(parsed.searchParams.get('maxResults'), '10');
-      return response(200, {items: ids.map(id => ({id: {videoId: id}}))});
-    }
-    assert.equal(parsed.searchParams.get('id'), ids.join(','));
-    assert.ok(Date.now() - searchAt >= 990, 'the metadata request must not immediately follow the search');
-    return response(200, {items: ids.map(id => ({id, snippet: {title: 'Song', channelTitle: 'Artist'}, contentDetails: {duration: 'PT3M2S'}}))});
+test('public music search returns ten bounded candidates with renderer artists and recording durations in one request', async () => {
+  const ids = Array.from({length: 13}, (_, i) => `Music${String(i).padStart(6, '0')}`);
+  let calls = 0;
+  const api = backend(async (url, options) => {
+    calls++;
+    assert.equal(new URL(url).hostname, 'music.youtube.com');
+    assert.equal(JSON.parse(options.body).params, 'EgWKAQIIAWoMEA4QChADEAQQCRAF');
+    return response(200, musicResults(ids));
   });
-  const session = api.testing.seal({access_token: 'test-only', expires_at: Date.now() + 3600000});
-  const result = await api.handler({path: '/api/youtube/search', httpMethod: 'GET', headers: {cookie: `g_session=${session}`}, queryStringParameters: {q: 'Artist Song'}});
+  const result = await api.handler(event('youtube/music/search', {q: 'Artist Song'}));
   assert.equal(result.statusCode, 200);
   const data = JSON.parse(result.body);
   assert.equal(data.items.length, 10);
   assert.equal(data.items[0].duration, 182);
+  assert.deepEqual(data.items[0].artists, ['Artist']);
+  assert.equal(data.items[0].channel, 'Artist');
+  assert.deepEqual(data.items.map(item => item.id), ids.slice(0, 10));
+  assert.equal(data.source, 'youtube-music-public');
+  assert.equal(calls, 1, 'candidate metadata comes from the public renderer instead of a second videos.list request');
+});
+
+test('an unexpected public response format is actionable and never cached as an empty result', async () => {
+  let calls = 0;
+  const api = backend(async () => response(200, ++calls === 1 ? {unexpected: 'private-renderer-data'} : musicResults()));
+  const request = event('youtube/music/search', {q: 'Artist Song'});
+  const first = await api.handler(request);
+  const failure = JSON.parse(first.body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(failure.code, 'YOUTUBE_MUSIC_FORMAT_CHANGED');
+  assert.equal(failure.details.cause, 'invalid-response');
+  assert.equal(failure.details.attempts, 1);
+  assert.doesNotMatch(first.body, /private-renderer-data/);
+  assert.equal((await api.handler(request)).statusCode, 200);
+  assert.equal(calls, 2);
+});
+
+test('an exhausted official Google project quota does not block anonymous catalogue searches', async () => {
+  const calls = [];
+  const api = backend(async url => {
+    calls.push(url);
+    return new URL(url).hostname === 'music.youtube.com' ? response(200, musicResults())
+      : response(403, {error: {errors: [{reason: 'quotaExceeded'}]}});
+  });
+  const session = api.testing.seal({channel_id: 'fixture-channel', access_token: 'private-access', expires_at: Date.now() + 3600000});
+  const cookie = `g_session=${session}`;
+  const read = await api.handler(event('youtube/playlist/state', {input: 'Playlist1234567890'}, cookie));
+  assert.equal(read.statusCode, 403);
+  assert.equal(JSON.parse(read.body).details.cause, 'quota');
+  const search = await api.handler(event('youtube/music/search', {q: 'Artist Song'}, cookie));
+  assert.equal(search.statusCode, 200);
+  assert.equal(JSON.parse(search.body).source, 'youtube-music-public');
+  assert.equal(calls.length, 2);
+  assert.equal(calls.filter(url => new URL(url).hostname === 'music.youtube.com').length, 1);
 });
 
 const personalId = 'a'.repeat(32), sharedId = 'b'.repeat(32);

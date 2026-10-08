@@ -23,7 +23,8 @@
   const state = {
     direction: 'spotify-youtube', session: null, running: false, paused: false, cancelled: false,
     destination: null, added: 0, skipped: 0, pending: [], usedIds: new Set(),
-    record: null, selectedRecord: null, processed: {}, inFlight: [], sourceInput: '', reviewing: false
+    record: null, selectedRecord: null, processed: {}, inFlight: [], sourceInput: '', reviewing: false,
+    failedSources: new Set(), sourceKeys: [], progressDone: 0
   };
 
   class Cancelled extends Error {}
@@ -44,7 +45,8 @@
 
   function requestContext(path, method) {
     const route = path.split('?')[0];
-    const provider = route.startsWith('/youtube/') ? 'youtube' : route.startsWith('/spotify/') ? 'spotify' : 'site';
+    const provider = route === '/youtube/music/search' ? 'youtube-music'
+      : route.startsWith('/youtube/') ? 'youtube' : route.startsWith('/spotify/') ? 'spotify' : 'site';
     const operation = route === '/session' ? 'session' : route.endsWith('/search') ? 'search'
       : /\/playlist\/items?$/.test(route) ? 'playlist-add'
       : route.endsWith('/playlist/state') || method === 'GET' && route.endsWith('/playlist') ? 'playlist-read'
@@ -55,7 +57,7 @@
   function describeFailure(error, technical = true) {
     if (!error.context) return error.message;
     const details = error.details || {};
-    const provider = {youtube: 'YouTube / Google', spotify: 'Spotify', site: 'RHYFT'}[details.provider || error.context.provider] || 'RHYFT';
+    const provider = {youtube: 'YouTube / Google', 'youtube-music': 'YouTube Music (busca pública)', spotify: 'Spotify', site: 'RHYFT'}[details.provider || error.context.provider] || 'RHYFT';
     const operation = operations[details.operation] || operations[error.context.operation] || operations.request;
     let message = `Falha ao ${operation} (${provider}): ${error.message}`;
     if (technical) {
@@ -148,7 +150,13 @@
   }
 
   function isTemporary(error) {
+    if (isPublicSearchBlocked(error) || error.code === 'YOUTUBE_MUSIC_FORMAT_CHANGED') return false;
     return isRateLimited(error) || (typeof error.retryable === 'boolean' ? error.retryable : [500, 502, 503, 504].includes(error.status));
+  }
+
+  function isPublicSearchBlocked(error) {
+    return (error.context?.provider === 'youtube-music' || error.details?.provider === 'youtube-music')
+      && (error.status === 403 || ['catalog-blocked', 'blocked', 'captcha'].includes(error.details?.cause) || /CAPTCHA|BLOCKED/i.test(error.code || ''));
   }
 
   function withProviderLock(provider, action) {
@@ -166,7 +174,7 @@
         const wait = pacing.remaining(provider, at);
         if (!wait.ms) break;
         if (wait.blocked && state.running) {
-          ui.progressTitle.textContent = `${{youtube: 'YouTube', spotify: 'Spotify'}[provider] || 'Servidor'} limitou as chamadas · aguardando ${Math.ceil(wait.ms / 1000)}s…`;
+          ui.progressTitle.textContent = `${{youtube: 'YouTube', 'youtube-music': 'YouTube Music (busca pública)', spotify: 'Spotify'}[provider] || 'Servidor'} limitou as chamadas · aguardando ${Math.ceil(wait.ms / 1000)}s…`;
           displayed = true;
         }
         await sleep(Math.min(wait.ms, 200));
@@ -249,7 +257,7 @@
     if (state.running || state.reviewing) return;
     try {
       await api('/logout', { method: 'POST', body: { provider } });
-      searchCache.clear(provider === 'google' ? 'youtube' : 'spotify');
+      searchCache.clear(provider === 'google' ? 'youtube-music' : 'spotify');
       showToast(`${provider === 'spotify' ? 'Spotify' : 'Google / YouTube'} desconectado.`);
       await loadSession();
     } catch (error) { showToast(error.message, true); }
@@ -285,6 +293,7 @@
   }
 
   function progress(done, total, current = '') {
+    if (total) state.progressDone = Math.max(state.progressDone, Math.min(done, total));
     const pct = total ? Math.round((done / total) * 100) : 0;
     ui.progressPercent.textContent = `${pct}%`;
     ui.progressBar.style.width = `${pct}%`;
@@ -303,6 +312,7 @@
   function resetRun() {
     state.destination = null; state.added = 0; state.skipped = 0; state.pending = []; state.usedIds = new Set();
     state.record = null; state.processed = {}; state.inFlight = [];
+    state.failedSources = new Set(); state.sourceKeys = []; state.progressDone = 0;
     ui.log.textContent = ''; ui.pendingList.textContent = ''; ui.pendingPanel.hidden = true; ui.resultPanel.hidden = true;
     ui.progressPanel.hidden = false; ui.progressTitle.textContent = 'Preparando migração…'; progress(0, 0);
   }
@@ -512,19 +522,20 @@
 
   async function findCandidates(track, kind) {
     const cached = state.pending.find(item => !item.resolved && sourceKey(item.source) === sourceKey(track));
-    const pool = new Map((cached?.candidates || []).map(candidate => [candidate.id, candidate]));
+    const pool = new Map((cached?.candidates || []).filter(candidate => kind !== 'youtube' || candidate.catalogSource === 'youtube-music-public').map(candidate => [candidate.id, candidate]));
     let ranked = matching.rank(track, [...pool.values()], kind);
     // Reevaluate older pending matches with the new comparator before spending quota.
     if (ranked[0]?.auto) return ranked;
     for (const query of matching.queries(track, kind)) {
       await checkpoint();
-      let found = searchCache.get(kind, query);
+      const provider = kind === 'youtube' ? 'youtube-music' : kind;
+      let found = searchCache.get(provider, query);
       if (found) log(`♻ Reaproveitando busca salva: ${track.name || track.title}`, 'ok');
       else {
-        found = await api(`/${kind}/search?q=${encodeURIComponent(query)}`);
-        searchCache.set(kind, query, found);
+        found = await api(`${kind === 'youtube' ? '/youtube/music/search' : '/spotify/search'}?q=${encodeURIComponent(query)}`);
+        searchCache.set(provider, query, found);
       }
-      for (const candidate of found.items || []) pool.set(candidate.id, candidate);
+      for (const candidate of found.items || []) pool.set(candidate.id, kind === 'youtube' ? {...candidate, catalogSource: 'youtube-music-public'} : candidate);
       ranked = matching.rank(track, [...pool.values()], kind);
       if (ranked[0]?.auto) break;
     }
@@ -532,22 +543,29 @@
   }
 
   function resolveSource(track) {
+    if (state.failedSources.delete(sourceKey(track))) state.skipped = Math.max(0, state.skipped - 1);
     state.pending.forEach(item => {
       if (sourceKey(item.source) === sourceKey(track)) item.resolved = true;
     });
   }
 
-  function addPending(source, candidates, kind) {
+  function addPending(source, candidates, kind, searchFailed = false, persist = true) {
     const existing = state.pending.find(item => !item.resolved && sourceKey(item.source) === sourceKey(source));
-    if (existing) existing.candidates = candidates.slice(0, 4);
-    else state.pending.push({ source, candidates: candidates.slice(0, 4), kind, resolved: false });
-    saveProgress();
+    if (existing) { existing.candidates = candidates.slice(0, 4); existing.searchFailed = searchFailed; }
+    else state.pending.push({ source, candidates: candidates.slice(0, 4), kind, resolved: false, searchFailed });
+    if (persist) saveProgress();
+  }
+
+  function failedPublicSearch(track, persist = true) {
+    if (!state.failedSources.has(sourceKey(track))) {state.failedSources.add(sourceKey(track)); state.skipped++;}
+    addPending(track, [], 'youtube', true, persist);
   }
 
   async function spotifyToYoutube(sourceInput, name) {
     ui.progressTitle.textContent = 'Lendo playlist do Spotify…';
     const source = await api(`/spotify/playlist?input=${encodeURIComponent(sourceInput)}`);
     if (!source.tracks.length) throw new Error('A playlist do Spotify não possui faixas disponíveis para migrar.');
+    state.sourceKeys = source.tracks.map(sourceKey);
     log(`✓ ${source.tracks.length} faixas carregadas do Spotify`, 'ok');
     progress(0, source.tracks.length);
     if (source.truncated) log('⚠ Playlist muito grande: esta sessão processará apenas as primeiras 2.000 faixas.', 'warn');
@@ -576,9 +594,30 @@
           addPending(track, ranked, 'youtube');
           log('  ? Correspondência incerta — deixei para sua escolha.', 'warn');
         } else {
-          state.skipped++; log('  ! Nenhum resultado útil encontrado.', 'warn');
+          addPending(track, [], 'youtube');
+          log('  ? Nenhum resultado útil encontrado — deixei para escolher pelo link.', 'warn');
         }
       } catch (error) {
+        if (error.context?.provider === 'youtube-music' && error.context.operation === 'search' && !(error instanceof Cancelled)) {
+          log(`  ✕ ${describeFailure(error)}`, 'error');
+          failedPublicSearch(track);
+          if (isPublicSearchBlocked(error) || error.code === 'YOUTUBE_MUSIC_FORMAT_CHANGED') {
+            for (const remaining of source.tracks.slice(i + 1)) {
+              if (!state.processed[sourceKey(remaining)]) failedPublicSearch(remaining, false);
+            }
+            saveProgress();
+            const blocked = isPublicSearchBlocked(error);
+            log(blocked
+              ? '  ↳ O YouTube Music bloqueou a busca pública. O motor foi interrompido sem novas consultas; escolha os links das faixas pendentes abaixo.'
+              : '  ↳ O formato de resposta do YouTube Music mudou. O motor foi interrompido sem novas consultas; escolha os links das faixas pendentes abaixo.', 'warn');
+            progress(i, total, `${blocked ? 'Busca pública bloqueada' : 'Formato da busca incompatível'} · revisão por link disponível`);
+            return;
+          }
+          log(`  ↳ A busca não foi concluída${error.attempts === 3 ? ' após 3 tentativas' : ''}. Você pode adicionar esta faixa por link ou tentar ao retomar; seguindo com as próximas.`, 'warn');
+          progress(i + 1, total, track.name);
+          await sleep(120);
+          continue;
+        }
         if (!canDeferSearch(error) && (error instanceof Cancelled || isTemporary(error) || state.inFlight.length || error.status === 401 || error.status === 429 || /quota|cota|limit|salvar o progresso/i.test(error.message))) throw error;
         state.skipped++; log(`  ✕ ${describeFailure(error)}`, 'error');
         if (canDeferSearch(error)) log('  ↳ Busca falhou após 3 tentativas. Esta faixa ficou para tentar ao retomar; seguindo com as próximas.', 'warn');
@@ -593,6 +632,7 @@
     ui.progressTitle.textContent = 'Lendo playlist do YouTube…';
     const source = await api(`/youtube/playlist?input=${encodeURIComponent(sourceInput)}`);
     if (!source.tracks.length) throw new Error('A playlist do YouTube não possui vídeos disponíveis para migrar.');
+    state.sourceKeys = source.tracks.map(sourceKey);
     log(`✓ ${source.tracks.length} itens carregados do YouTube`, 'ok');
     progress(0, source.tracks.length);
     if (source.truncated) log('⚠ Playlist muito grande: esta sessão processará apenas as primeiras 2.000 faixas.', 'warn');
@@ -668,7 +708,7 @@
     try {
       await addEntries(item.kind, [{ source: item.source, candidate }]);
       item.resolved = true;
-      saveProgress();
+      saveReviewProgress();
       renderPending(); updateResult();
       showToast(`Adicionada: ${candidate.title || candidate.name}`);
     } catch (error) {
@@ -679,12 +719,35 @@
     }
   }
 
+  function saveReviewProgress() {
+    const total = state.sourceKeys.length;
+    const done = state.sourceKeys.filter(key => state.processed[key]).length;
+    const complete = total > 0 && done === total && !state.inFlight.length && state.record?.status !== 'cancelled';
+    saveProgress(complete ? 'completed' : state.record?.status);
+    if (total) progress(Math.max(state.progressDone, done), total, complete ? 'Concluído' : ui.progressCurrent.textContent);
+    if (complete) ui.progressTitle.textContent = 'Migração processada';
+  }
+
+  function youtubeVideoId(input) {
+    let url;
+    try { url = new URL(input.trim()); } catch { return null; }
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+    const host = url.hostname.toLowerCase();
+    let id;
+    if (host === 'youtu.be') id = url.pathname.match(/^\/([A-Za-z0-9_-]{11})\/?$/)?.[1];
+    else if (['youtube.com', 'www.youtube.com', 'music.youtube.com', 'm.youtube.com'].includes(host)) {
+      id = url.pathname === '/watch' ? url.searchParams.get('v')
+        : url.pathname.match(/^\/(?:shorts|live|embed)\/([A-Za-z0-9_-]{11})\/?$/)?.[1];
+    }
+    return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+  }
+
   function renderPending() {
     const active = state.pending.filter(p => !p.resolved);
     ui.pendingPanel.hidden = active.length === 0;
     ui.pendingTitle.textContent = active.length === 1 ? '1 faixa precisa de revisão' : `${active.length} faixas precisam de revisão`;
     ui.pendingList.textContent = '';
-    active.forEach(item => {
+    active.forEach((item, index) => {
       const card = document.createElement('article'); card.className = 'pending-item';
       const source = document.createElement('div'); source.className = 'pending-source'; source.textContent = `${item.source.name} — ${(item.source.artists || []).join(', ')}`;
       card.appendChild(source);
@@ -708,11 +771,39 @@
         row.append(meta, choose); list.appendChild(row);
       });
       card.appendChild(list);
+      if (item.kind === 'youtube') {
+        if (item.searchFailed) {
+          const failure = document.createElement('p'); failure.className = 'pending-search-failure';
+          failure.textContent = 'A busca desta faixa não foi concluída. Escolha o vídeo pelo link ou tente novamente ao retomar.';
+          card.appendChild(failure);
+        }
+        const manual = document.createElement('div'); manual.className = 'pending-manual-link';
+        const search = document.createElement('a'); search.className = 'candidate-listen';
+        search.href = `https://music.youtube.com/search?q=${encodeURIComponent(queryFor(item.source))}`;
+        search.target = '_blank'; search.rel = 'noreferrer'; search.textContent = 'Buscar no YouTube Music';
+        card.appendChild(search);
+        const label = document.createElement('label'); label.textContent = 'Link da música no YouTube';
+        const input = document.createElement('input'); input.type = 'url'; input.id = `manual-video-${index}`;
+        input.placeholder = 'https://music.youtube.com/watch?v=…'; input.autocomplete = 'off'; label.htmlFor = input.id;
+        const add = document.createElement('button'); add.type = 'button'; add.textContent = 'Adicionar pelo link';
+        const submit = async () => {
+          if (state.running || state.reviewing || item.resolved) return;
+          const id = youtubeVideoId(input.value);
+          if (!id) {showToast('Cole um link válido de uma música ou vídeo do YouTube; links somente de playlist não servem.', true); input.focus(); return;}
+          await resolvePending(item, {id, title: item.source.name || item.source.title, channel: 'Link escolhido por você',
+            url: `https://www.youtube.com/watch?v=${id}`, catalogSource: 'manual-link'}, card);
+        };
+        add.addEventListener('click', submit);
+        input.addEventListener('keydown', event => {if (event.key === 'Enter') {event.preventDefault(); submit();}});
+        manual.append(label, input, add); card.appendChild(manual);
+      }
       const ignore = document.createElement('button'); ignore.className = 'pending-ignore'; ignore.type = 'button'; ignore.textContent = 'Ignorar esta faixa';
       ignore.addEventListener('click', () => {
         if (state.reviewing || state.running) return;
-        item.resolved = true; state.skipped++; state.processed[sourceKey(item.source)] = 'ignored';
-        try { saveProgress(); } catch (error) { showToast(error.message, true); }
+        item.resolved = true;
+        if (!state.failedSources.delete(sourceKey(item.source))) state.skipped++;
+        state.processed[sourceKey(item.source)] = 'ignored';
+        try { saveReviewProgress(); } catch (error) { showToast(error.message, true); }
         card.remove(); renderPending(); updateResult();
       });
       card.appendChild(ignore); ui.pendingList.appendChild(card);

@@ -4,7 +4,7 @@
   else root.RhyftProviderPacing = pacing;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const KEY = 'rhyft.web.provider-pacing.v1';
-  const defaults = {youtube: 2000, spotify: 0};
+  const defaults = {youtube: 2000, 'youtube-music': 1000, spotify: 0};
 
   function create({storage, now = Date.now} = {}) {
     const memory = {};
@@ -40,10 +40,11 @@
     function limited(provider, retryAfterMs = 0) {
       const state = read(provider);
       state.strikes = Math.min(state.strikes + 1, 8);
-      const base = provider === 'youtube' ? 60000 : 30000;
+      const base = provider === 'youtube' ? 60000 : provider === 'youtube-music' ? 15000 : 30000;
       const delay = Math.max(base * 2 ** Math.min(state.strikes - 1, 2), Number.isFinite(retryAfterMs) ? retryAfterMs : 0);
       state.blockedUntil = Math.max(state.blockedUntil, now() + delay);
-      state.intervalMs = provider === 'youtube' ? Math.min(2000 * 2 ** state.strikes, 10000) : 2000;
+      state.intervalMs = provider === 'youtube' ? Math.min(2000 * 2 ** state.strikes, 10000)
+        : provider === 'youtube-music' ? Math.min(1000 * 2 ** state.strikes, 5000) : 2000;
       state.expiresAt = Math.max(state.expiresAt, state.blockedUntil + 1800000);
       write(provider, state);
       return state.blockedUntil - now();
