@@ -1,7 +1,8 @@
 [build]
   publish = "site"
   functions = "netlify/functions"
-  # Publicação pontual autorizada; os demais commits continuam sem build.
+  # Tentativa pontual autorizada em 2026-10-08 para a atualização Web.
+  # Os demais commits continuam sem build automático.
   # Netlify: saída 0 ignora o build; 1 permite esta publicação.
   ignore = "test \"$(git log -1 --format=%s \"$COMMIT_REF\")\" != \"Deploy web fixes to Netlify\""
 
