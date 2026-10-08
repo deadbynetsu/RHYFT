@@ -48,7 +48,8 @@ function requireEnv(...names) {
 }
 
 function origin(event) {
-  if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
+  const configuredUrl = process.env.SITE_URL || process.env.RENDER_EXTERNAL_URL;
+  if (configuredUrl) return configuredUrl.replace(/\/$/, '');
   const proto = event.headers['x-forwarded-proto'] || 'https';
   const host = event.headers.host;
   return `${proto}://${host}`;

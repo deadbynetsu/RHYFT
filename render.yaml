@@ -1,12 +1,24 @@
-# Example Blueprint. Importing it does not happen until you choose to deploy.
+# Blueprint for the Web service in the primary RHYFT repository.
+# Linking it to a Render account and deploying remain separate actions.
 services:
   - type: web
     name: rhyft-web
+    repo: https://github.com/deadbynetsu/RHYFT
+    branch: main
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile.web
     dockerContext: .
     healthCheckPath: /health
-    autoDeploy: false
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - site/**
+        - netlify/functions/**
+        - web-server.cjs
+        - Dockerfile.web
+        - Dockerfile.web.dockerignore
+        - render.yaml
     envVars:
       - key: HOST
         value: 0.0.0.0
@@ -14,8 +26,6 @@ services:
         value: "1"
       - key: NETLIFY_DEV
         value: "false"
-      - key: SITE_URL
-        sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: GOOGLE_CLIENT_ID

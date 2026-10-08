@@ -709,6 +709,45 @@ test('a callback with an invalid OAuth state cannot exchange a token', async () 
 });
 
 const googleEnv = {GOOGLE_CLIENT_ID: 'fixture-google-client', GOOGLE_CLIENT_SECRET: 'fixture-google-secret'};
+
+for (const [label, configured, publicOrigin] of [
+  ['Render public URL', {RENDER_EXTERNAL_URL: 'https://rhyft.onrender.com/'}, 'https://rhyft.onrender.com'],
+  ['explicit site URL over Render URL', {SITE_URL: 'https://music.example.test/', RENDER_EXTERNAL_URL: 'https://rhyft.onrender.com/'}, 'https://music.example.test']
+]) {
+  for (const provider of ['spotify', 'google']) {
+    test(`${provider} authorization and token exchange use the ${label} despite an internal request host`, async () => {
+      const tokenBodies = [];
+      const api = backend(async (url, options) => {
+        if (url.endsWith('/token')) {
+          tokenBodies.push(new URLSearchParams(options.body));
+          return response(200, {access_token: 'fixture-origin-access', refresh_token: 'fixture-origin-refresh', expires_in: 3600});
+        }
+        return response(200, provider === 'spotify' ? {id: 'fixture-user', display_name: 'Fixture user'}
+          : {items: [{id: 'fixture-channel', snippet: {title: 'Fixture channel'}}]});
+      }, {...googleEnv, SPOTIFY_CLIENT_ID: sharedId, ...configured});
+      const internalEvent = (route, query = {}, cookie = '') => ({...event(route, query, cookie),
+        headers: {host: 'backend.internal:10000', 'x-forwarded-proto': 'http', cookie}});
+      const start = await api.handler(internalEvent(`${provider}/start`, provider === 'spotify' ? {client_id: personalId} : {}));
+      assert.equal(start.statusCode, 302);
+      const authorization = new URL(start.headers.Location);
+      const callback = `${publicOrigin}/api/${provider}/callback`;
+      assert.equal(authorization.searchParams.get('redirect_uri'), callback);
+      const cookieName = provider === 'spotify' ? 'sp_oauth' : 'g_oauth';
+      const oauthCookie = savedCookie(start, cookieName);
+      const oauth = api.testing.unseal(oauthCookie);
+      const completed = await api.handler(internalEvent(`${provider}/callback`, {state: oauth.state, code: 'fixture-origin-code'}, `${cookieName}=${oauthCookie}`));
+      assert.equal(completed.statusCode, 302);
+      assert.match(completed.headers.Location, new RegExp(`auth=${provider}-ok`));
+      assert.equal(tokenBodies.length, 1);
+      assert.equal(tokenBodies[0].get('redirect_uri'), callback);
+      const session = await api.handler(internalEvent('session'));
+      assert.equal(session.statusCode, 200);
+      assert.equal(JSON.parse(session.body).spotify.callbackUrl, `${publicOrigin}/api/spotify/callback`);
+      assert.doesNotMatch(authorization.searchParams.get('redirect_uri'), /backend\.internal|\/\/api\//);
+    });
+  }
+}
+
 async function googleLogin(api, previous) {
   const start = await api.handler(event('google/start'));
   const oauthCookie = savedCookie(start, 'g_oauth');

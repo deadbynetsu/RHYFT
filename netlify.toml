@@ -1,6 +1,9 @@
 [build]
   publish = "site"
   functions = "netlify/functions"
+  # O site Web passa a ser publicado pelo Render, no mesmo repositório.
+  # Netlify: saída 0 ignora o build. Remova esta linha para reativá-lo.
+  ignore = "exit 0"
 
 [functions]
   node_bundler = "esbuild"

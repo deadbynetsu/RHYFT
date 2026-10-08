@@ -1,19 +1,33 @@
 # Executar a versão Web fora do Netlify
 
-O pacote Web executa o site e sua API em um servidor Node.js 22 ou superior, sem instalar dependências npm. Ele pode rodar no seu PC, em Docker ou em um host público. Os aplicativos Android e Windows têm distribuição separada.
+O site e sua API podem ser hospedados fora do Netlify a partir do mesmo repositório principal: [deadbynetsu/RHYFT](https://github.com/deadbynetsu/RHYFT), branch `main`. O servidor usa Node.js 22 ou superior, sem dependências npm adicionais. Os aplicativos Android e Windows continuam no mesmo projeto, com distribuição separada.
 
 Arquivos HTML sozinhos permitem abrir a interface, mas a migração exige o backend para OAuth e operações nas playlists. Este guia e o `render.yaml` são configuração de exemplo: não representam um novo site já publicado nem garantem um plano gratuito.
 
-## Abrir no seu PC Windows
+## Hospedagem pública no Render
 
-1. Instale o [Node.js 22 ou superior](https://nodejs.org/en/download).
-2. Extraia o pacote Web em uma pasta e copie `.env.web.example` para `.env.web`.
-3. Preencha `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` com o cliente Google Web que você já usa. Quem administra a instalação pode copiar esses valores das configurações de ambiente atuais, como as do Netlify, diretamente para o arquivo local. `SPOTIFY_CLIENT_ID` é opcional; a conexão por Client ID pessoal continua disponível.
-4. Cadastre os endereços locais de OAuth descritos abaixo e abra `iniciar-web.cmd`.
+O `render.yaml` descreve um serviço Docker usando `Dockerfile.web`, ligado ao repositório principal e à branch `main`. Para publicar a versão Web:
 
-O launcher mantém a janela do servidor aberta e abre `http://127.0.0.1:8787/migrar.html` no navegador **do PC onde foi executado**. Esse endereço não é uma URL pública nem uma prévia acessível de outro computador. Fechar a janela encerra o servidor.
+1. Abra [Deploy no Render](https://render.com/deploy?repo=https://github.com/deadbynetsu/RHYFT) ou crie um Blueprint no Render e conecte [deadbynetsu/RHYFT](https://github.com/deadbynetsu/RHYFT).
+2. Selecione a branch `main` e o arquivo `render.yaml` da raiz. Como alternativa, crie um Web Service Docker para esse mesmo repositório e selecione `Dockerfile.web`.
+3. Configure os valores abaixo e os callbacks da URL final. Não é necessário criar outro repositório ou enviar um ZIP ao Render.
 
-O launcher cria um segredo aleatório em `.rhyft-web-session-secret` e reutiliza esse arquivo nas próximas execuções. Não é preciso preencher `SESSION_SECRET` para essa execução local. As variáveis definidas pelo launcher têm prioridade sobre `.env.web`, incluindo os endereços locais e o segredo. Os cookies OAuth ficam no navegador. O histórico pertence ao navegador e ao endereço do site: mudar do Netlify para localhost ou outro domínio não transfere automaticamente as migrações anteriores.
+O Blueprint solicita o plano `free`. Confirme a disponibilidade e os limites exibidos pelo Render antes de criar o serviço; o arquivo não indica que uma conta Render já foi vinculada ou que o site foi publicado.
+
+No serviço, configure:
+
+- `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`: os valores do cliente Google Web existente.
+- `SESSION_SECRET`: o Blueprint gera um valor aleatório; conserve-o entre reinícios e atualizações para manter as sessões.
+- `SPOTIFY_CLIENT_ID`: opcional para oferecer a conexão pelo app compartilhado.
+- `SITE_URL`: opcional se você usar um domínio próprio; nesse caso, informe sua URL HTTPS sem barra ao final.
+
+O endereço HTTPS `onrender.com` do serviço é detectado automaticamente pela variável `RENDER_EXTERNAL_URL` do Render. O Blueprint define `HOST=0.0.0.0`, `TRUST_PROXY=1` e `NETLIFY_DEV=false`. O servidor respeita o `PORT` fornecido pelo host; a verificação de funcionamento é `/health`. Quando o Render informar a URL final, cadastre seus callbacks antes de testar o login. O arquivo de configuração não cria ou publica um serviço por si só.
+
+Depois de conectado ao Render, o serviço recebe deploys automáticos de alterações Web em `main`. O filtro `buildFilter.paths` inclui `site/**`, `netlify/functions/**`, `web-server.cjs`, `Dockerfile.web`, `Dockerfile.web.dockerignore` e `render.yaml`. Alterações apenas nos aplicativos nativos não acionam esse serviço Web.
+
+### O site antigo no Netlify
+
+A configuração do repositório suspende novos builds no Netlify. O endereço antigo pode continuar servindo a versão já publicada; acessos ao site e chamadas às funções antigas ainda podem consumir créditos da plataforma. Suspender builds não garante consumo zero. Use a URL final do novo host depois de publicar e configurar o OAuth.
 
 ## Endereços OAuth por instalação
 
@@ -27,25 +41,6 @@ Uma origem nova precisa ser cadastrada nos clientes OAuth uma vez. Use os mesmos
 | Redirect URI do Spotify | `http://127.0.0.1:8787/api/spotify/callback` | `https://rhyft.seudominio.com/api/spotify/callback` |
 
 Configure o Google em **Google Auth Platform → Clientes → seu cliente Web** e o Spotify nas configurações do aplicativo escolhido. Uma pessoa usando Client ID próprio deve cadastrar o callback do Spotify nesse próprio aplicativo. Restrições de contas autorizadas pelas plataformas continuam valendo.
-
-## Hospedagem pública no Render
-
-O `render.yaml` descreve um serviço Docker usando `Dockerfile.web`. Para publicar este pacote:
-
-1. Crie um repositório GitHub separado para a versão Web, por exemplo `RHYFT-WEB`.
-2. Extraia o ZIP e envie somente os arquivos e diretórios originais do pacote para a raiz desse novo repositório. Mantenha `.env.web` e `.rhyft-web-session-secret`, gerados ao configurar a instalação, apenas na sua máquina. O upload manual no GitHub não aplica as regras do `.gitignore`. O Render precisa ler os arquivos extraídos; enviar apenas o ZIP não prepara o serviço.
-3. No Render, importe esse novo repositório como Blueprint ou crie um Web Service Docker e selecione `Dockerfile.web`.
-
-Use o conteúdo deste pacote, pois essas alterações não são publicadas automaticamente no repositório original nem no Netlify. Escolha o plano conforme a disponibilidade e os preços exibidos pelo provedor.
-
-No serviço, configure:
-
-- `SITE_URL`: a URL HTTPS final do serviço ou domínio, sem barra ao final.
-- `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`: os valores do cliente Google Web existente.
-- `SESSION_SECRET`: o Blueprint gera um valor aleatório; conserve-o entre reinícios e atualizações para manter as sessões.
-- `SPOTIFY_CLIENT_ID`: opcional para oferecer a conexão pelo app compartilhado.
-
-O Blueprint define `HOST=0.0.0.0`, `TRUST_PROXY=1` e `NETLIFY_DEV=false`. O servidor respeita o `PORT` fornecido pelo host; a verificação de funcionamento é `/health`. Cadastre os callbacks da URL final antes de testar o login. O arquivo de configuração não cria ou publica um serviço por si só.
 
 ## Docker e VPS com HTTPS
 
@@ -91,6 +86,17 @@ HOST=127.0.0.1 PORT=8787 SITE_URL=https://rhyft.seudominio.com \
   TRUST_PROXY=1 NETLIFY_DEV=false \
   node --env-file=.env.web web-server.cjs
 ```
+
+## Abrir no seu PC Windows
+
+1. Instale o [Node.js 22 ou superior](https://nodejs.org/en/download).
+2. Extraia o pacote Web em uma pasta e copie `.env.web.example` para `.env.web`.
+3. Preencha `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` com o cliente Google Web que você já usa. Quem administra a instalação pode copiar esses valores das configurações de ambiente atuais, como as do Netlify, diretamente para o arquivo local. `SPOTIFY_CLIENT_ID` é opcional; a conexão por Client ID pessoal continua disponível.
+4. Cadastre os endereços locais de OAuth da tabela acima e abra `iniciar-web.cmd`.
+
+O launcher mantém a janela do servidor aberta e abre `http://127.0.0.1:8787/migrar.html` no navegador **do PC onde foi executado**. Esse endereço não é uma URL pública nem uma prévia acessível de outro computador. Fechar a janela encerra o servidor.
+
+O launcher cria um segredo aleatório em `.rhyft-web-session-secret` e reutiliza esse arquivo nas próximas execuções. Não é preciso preencher `SESSION_SECRET` para essa execução local. As variáveis definidas pelo launcher têm prioridade sobre `.env.web`, incluindo os endereços locais e o segredo. Os cookies OAuth ficam no navegador. O histórico pertence ao navegador e ao endereço do site: mudar do Netlify para localhost ou outro domínio não transfere automaticamente as migrações anteriores.
 
 ## Conteúdo do pacote ZIP
 
